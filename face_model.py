@@ -20,12 +20,12 @@ def add_batchnorm_layers(net):
     net = tf.mul(net, 10, name="{}_scl".format(name))
     
     num, = re.findall(r"(\d+)_", name)
-    net = slim.conv2d(net, 3, (1, 1), padding='VALID', rate=1, scope='score_nrm_{}_0_hole0'.format(num), activation_fn=None)
+    net = slim.conv2d(net, 3, (1, 1), scope='score_nrm_{}_0_hole0'.format(num), activation_fn=None)
     return net
 
 def network(inputs, scale=1):
-    # original_size = inputs.get_shape()[1:3].as_list()
-
+    out_shape = tf.shape(inputs)[1:3]    
+    
     if scale > 1:
         inputs = tf.pad(inputs, ((0, 0), (1, 1), (1, 1), (0, 0)))
         inputs = slim.layers.avg_pool2d(inputs, (3, 3), (scale, scale), padding='VALID')
@@ -71,8 +71,6 @@ def network(inputs, scale=1):
             
             skip_connections = map(add_batchnorm_layers, skip_connections)
                               
-            out_shape = skip_connections[0].get_shape()[1:3].as_list()
-            
             skip_connections.append(net)
             skip_connections = [tf.image.resize_bilinear(
                                     x, out_shape, name="up_nrm_{}_0".format(i))
@@ -80,6 +78,26 @@ def network(inputs, scale=1):
 
             net = tf.concat(3, skip_connections, name='concat-nrm__00')
                               
-            net = slim.conv2d(net, 3, (1, 1), padding='VALID', scope='upscore-fuse-nrm__00',  activation_fn=None)
+            net = slim.conv2d(net, 3, (1, 1), scope='upscore-fuse-nrm__00',  activation_fn=None)
                               
     return net
+
+
+def multiscale_net(inputs, scales=(1, 2, 4)):
+    pyramid = []
+
+    for scale in scales:
+        with tf.variable_scope('RS', reuse=scale > 1):
+            pyramid.append(network(inputs, scale))
+
+    net = tf.concat(3, pyramid, name='concat-mr-nrm')
+    net = slim.conv2d(net, 3, (1, 1), scope='upscore-fuse-mr-nrm',  activation_fn=None)
+    # net = tf.nn.l2_normalize(net, 0, epsilon=1e-12, )
+    
+    def normalize(x, scale=0):
+        with tf.variable_scope('normupscore-fuse-mr-nrm_{}'.format(scale)):
+            normalization_matrix = tf.sqrt(1e-12 + tf.reduce_sum(tf.square(x), [3]))
+            x /= tf.expand_dims(normalization_matrix, 3)
+        return x
+
+    return normalize(net), [normalize(x, i) for i, x in enumerate(pyramid, start=1)]
