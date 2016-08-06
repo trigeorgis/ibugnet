@@ -105,6 +105,7 @@ def train():
         with tf.variable_scope('net'):
             prediction, pyramid = face_model.multiscale_net(images)
 
+        # Add a smoothed l1 loss to every scale and the combined output.
         for net in [prediction] + pyramid:
             loss = losses.smooth_l1(net, normals)
             slim.losses.add_loss(loss)
@@ -119,16 +120,16 @@ def train():
         if FLAGS.pretrained_model_checkpoint_path:
             saver.restore(sess, FLAGS.pretrained_model_checkpoint_path)
 
-        train_op = slim.learning.create_train_op(
-            total_loss, optimizer, summarize_gradients=True)
+        train_op = slim.learning.create_train_op(total_loss,
+                                                 optimizer,
+                                                 summarize_gradients=True)
 
         logging.set_verbosity(1)
-        slim.learning.train(
-            train_op,
-            FLAGS.train_dir,
-            saver=saver,
-            save_summaries_secs=60,
-            save_interval_secs=600)
+        slim.learning.train(train_op,
+                            FLAGS.train_dir,
+                            saver=saver,
+                            save_summaries_secs=60,
+                            save_interval_secs=600)
 
 
 if __name__ == '__main__':
