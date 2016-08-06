@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 
+
 def assign_caffe_weights(net_caffe, sess):
     caffe_layers = {}
 
@@ -20,10 +21,9 @@ def assign_caffe_weights(net_caffe, sess):
         layer = caffe_layers[layer_name]
         return layer.blobs[1].data
 
-
     def caffe2tf_filter(name):
-      f = caffe_weights(name)
-      return f.transpose((2, 3, 1, 0))
+        f = caffe_weights(name)
+        return f.transpose((2, 3, 1, 0))
 
     update_ops = []
 
@@ -52,7 +52,6 @@ def assign_caffe_weights(net_caffe, sess):
 
                     var = tf.get_variable('{}/moving_variance'.format(key))
                     update_ops.append(tf.assign(var, variance / scale))
-                    # print('not imple')
                 else:
                     continue
         key = 'upscore-fuse-mr-nrm'
@@ -60,9 +59,10 @@ def assign_caffe_weights(net_caffe, sess):
         bias = caffe_bias(key)
 
         var = tf.get_variable('{}/weights'.format(key))
-
         update_ops.append(tf.assign(var, weights))
 
         var = tf.get_variable('{}/biases'.format(key))
         update_ops.append(tf.assign(var, bias))
+
+    # Assign the caffe weights to the tf model.
     _ = sess.run(update_ops)
