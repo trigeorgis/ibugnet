@@ -2,9 +2,9 @@ import tensorflow as tf
 import numpy as np
 import face_model
 import losses
+import data_provider
 
 from tensorflow.python.platform import tf_logging as logging
-from scipy.io import loadmat
 from pathlib import Path
 
 slim = tf.contrib.slim
@@ -34,72 +34,12 @@ tf.app.flags.DEFINE_string('dataset_path', '', 'Dataset directory')
 MOVING_AVERAGE_DECAY = 0.9999
 
 
-def caffe_preprocess(image):
-    VGG_MEAN = np.array([102.9801, 115.9465, 122.7717])
-    # RGB -> BGR
-    image = tf.reverse(image, [False, False, True])
-    # Subtract VGG training mean across all channels
-    image = image - VGG_MEAN.reshape([1, 1, 3])
-    return image
-
-
-def rescale_images(images, stride_width=64):
-    # make sure smallest size is 600 pixels wide & dimensions are (k * stride_width) + 1
-    height = tf.to_float(tf.shape(images)[1])
-    width = tf.to_float(tf.shape(images)[2])
-
-    # Taken from 'szross'
-    scale_up = 625. / tf.minimum(height, width)
-    scale_cap = 961. / tf.maximum(height, width)
-    scale_up = tf.minimum(scale_up, scale_cap)
-    new_height = stride_width * tf.round(
-        (height * scale_up) / stride_width) + 1
-    new_width = stride_width * tf.round((width * scale_up) / stride_width) + 1
-    new_height = tf.to_int32(new_height)
-    new_width = tf.to_int32(new_width)
-
-    images = tf.image.resize_images(images, new_height, new_width)
-    return images
-
-
-def load_mat_normals(path):
-    path = Path(path)
-    path = str(path.parent.parent / 'normals' / path.stem)
-    return loadmat(path)['norms'].astype(np.float32)
-
-
-def ict_dataset():
-    root_path = Path('/vol/atlas/homes/iasonas/frcnn/data/ict3drfe/')
-    #indexes = [x.stem for x in (root_path / 'images').glob('*.png')]
-    #images_paths = tf.pack(map(str, [root_path / 'images' / (index + '.png') for index in indexes]))
-    #normals_paths = tf.pack(map(str, [root_path / 'normals' / (index + '.mat') for index in indexes]))
-    image_paths = tf.matching_files(str(root_path / 'images') + '/*.png')
-    image_paths = tf.train.string_input_producer(image_paths)
-    #image_path, normals_path = tf.train.slice_input_producer(
-    #    [images_paths, normals_paths], capacity=10000)
-    image_path = image_paths.dequeue()
-    image = tf.image.decode_png(tf.read_file(image_path), 3)
-    normals, = tf.py_func(load_mat_normals, [image_path], [tf.float32])
-    normals.set_shape(image.get_shape())
-    image = tf.to_float(image)
-
-    items_to_handlers = {
-        'image': image,
-        'normals': normals,
-    }
-
-    image = caffe_preprocess(image)
-    images = rescale_images(tf.expand_dims(image, 0))
-    normals = rescale_images(tf.expand_dims(normals, 0))
-
-    return images, normals
-
-
 def train():
     g = tf.Graph()
     with g.as_default():
         # Load dataset.
-        images, normals = ict_dataset()
+        provider = datasets.ICT3DFE()
+        images, normals = provider.get('normals')
 
         # Define model graph.
         with tf.variable_scope('net'):

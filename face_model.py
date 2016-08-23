@@ -11,9 +11,7 @@ def repeat_conv(net,
                 scope='conv',
                 padding=1):
     for i in range(1, num_repeats + 1):
-        net = tf.pad(net, ((0, 0),
-                           (padding, padding),
-                           (padding, padding),
+        net = tf.pad(net, ((0, 0), (padding, padding), (padding, padding),
                            (0, 0)))
         net = slim.layers.conv2d(net,
                                  output_filters,
@@ -88,9 +86,11 @@ def network(inputs, scale=1):
 
             net = slim.layers.max_pool2d(net, [3, 3], [1, 1], scope='pool5')
             net = tf.pad(net, ((0, 0), (1, 1), (1, 1), (0, 0)))
-            net = slim.layers.avg_pool2d(
-                net, 3, 1, padding='VALID',
-                scope='cue5')
+            net = slim.layers.avg_pool2d(net,
+                                         3,
+                                         1,
+                                         padding='VALID',
+                                         scope='cue5')
 
             # fc6
             net = tf.pad(net, ((0, 0), (12, 12), (12, 12), (0, 0)))
@@ -132,10 +132,10 @@ def multiscale_net(inputs, scales=(1, 2, 4)):
             pyramid.append(network(inputs, scale))
 
     net = tf.concat(3, pyramid, name='concat-mr-nrm')
-    net = slim.conv2d(
-        net, 3,
-        (1, 1), scope='upscore-fuse-mr-nrm',
-        activation_fn=None)
+    net = slim.conv2d(net,
+                      3, (1, 1),
+                      scope='upscore-fuse-mr-nrm',
+                      activation_fn=None)
 
     def normalize(x, scale=0):
         with tf.variable_scope('normupscore-fuse-mr-nrm_{}'.format(scale)):
