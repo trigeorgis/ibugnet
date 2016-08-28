@@ -44,7 +44,7 @@ def assign_caffe_weights(net_caffe, sess):
                     update_ops.append(tf.assign(var, weights))
 
                     var = tf.get_variable('{}/biases'.format(key))
-                    update_ops.append(tf.assign(var, bias))
+                    update_ops.append(tf.assign(var, tf.reshape(bias, tf.shape(var))))
                 elif layer.type == 'BatchNorm':
                     mean, variance, scale = caffe_bn(key)
                     var = tf.get_variable('{}/moving_mean'.format(key))
@@ -54,15 +54,17 @@ def assign_caffe_weights(net_caffe, sess):
                     update_ops.append(tf.assign(var, variance / scale))
                 else:
                     continue
-        key = 'upscore-fuse-mr-nrm'
-        weights = caffe2tf_filter(key)
-        bias = caffe_bias(key)
+        try:
+            key = 'upscore-fuse-mr-nrm'
+            weights = caffe2tf_filter(key)
+            bias = caffe_bias(key)
 
-        var = tf.get_variable('{}/weights'.format(key))
-        update_ops.append(tf.assign(var, weights))
+            var = tf.get_variable('{}/weights'.format(key))
+            update_ops.append(tf.assign(var, weights))
 
-        var = tf.get_variable('{}/biases'.format(key))
-        update_ops.append(tf.assign(var, bias))
-
+            var = tf.get_variable('{}/biases'.format(key))
+            update_ops.append(tf.assign(var, bias))
+        except:
+            print('ignoring upscore fuse layer')
     # Assign the caffe weights to the tf model.
     _ = sess.run(update_ops)

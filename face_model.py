@@ -28,7 +28,6 @@ def add_batchnorm_layers(net):
                           scale=False,
                           scope="BN_pre_{}".format(name),
                           epsilon=1,
-                          is_training=False,
                           outputs_collections='outputs')
 
     net = tf.mul(net, 10, name="{}_scl".format(name))
@@ -41,7 +40,7 @@ def add_batchnorm_layers(net):
     return net
 
 
-def network(inputs, scale=1):
+def network(inputs, scale=1, output_classes=3):
     out_shape = tf.shape(inputs)[1:3]
 
     if scale > 1:
@@ -53,22 +52,16 @@ def network(inputs, scale=1):
                         padding='SAME',
                         outputs_collections='outputs'):
         with slim.arg_scope(
-            [slim.layers.conv2d, slim.layers.fully_connected],
+            [slim.layers.conv2d],
                 weights_regularizer=slim.regularizers.l2_regularizer(0.0005),
                 padding='VALID',
                 outputs_collections='outputs'):
             skip_connections = []
 
-            net = repeat_conv(inputs,
-                              64,
-                              2,
-                              scope='conv1', )
+            net = repeat_conv(inputs, 64, 2, scope='conv1')
             skip_connections.append(net)
 
-            net = slim.layers.max_pool2d(net,
-                                         (3, 3),
-                                         [2, 2],
-                                         scope='pool1', )
+            net = slim.layers.max_pool2d(net, 3, 2, scope='pool1')
             net = repeat_conv(net, 128, 2, scope='conv2')
             skip_connections.append(net)
 
@@ -102,7 +95,7 @@ def network(inputs, scale=1):
             net = slim.layers.dropout(net, 0.5, scope='drop7')
             net = slim.conv2d(
                 net,
-                3, (1, 1),
+                output_classes, (1, 1),
                 scope='score_nrm_{}_0_hole0'.format(1 + len(skip_connections)),
                 activation_fn=None)
 
@@ -117,18 +110,37 @@ def network(inputs, scale=1):
             net = tf.concat(3, skip_connections, name='concat-nrm__00')
 
             net = slim.conv2d(net,
-                              3, (1, 1),
+                              output_classes, (1, 1),
                               scope='upscore-fuse-nrm__00',
                               activation_fn=None)
 
     return net
 
 
-def multiscale_net(inputs, scales=(1, 2, 4)):
+def multiscale_seg_net(inputs, scales=(1, 2, 4)):
     pyramid = []
 
     for scale in scales:
-        with tf.variable_scope('RS', reuse=scale > 1):
+        reuse_variables = scale != scales[0]
+        with tf.variable_scope('RS', reuse=reuse_variables):
+            pyramid.append(network(inputs, scale, output_classes=2))
+
+    net = tf.concat(3, pyramid, name='concat-mr-seg')
+    net = slim.conv2d(net,
+                      2, (1, 1),
+                      scope='upscore-fuse-mr-seg',
+                      activation_fn=None)
+
+
+    return net, pyramid
+
+
+def multiscale_nrm_net(inputs, scales=(1, 2, 4)):
+    pyramid = []
+
+    for scale in scales:
+        reuse_variables = scale != scales[0]
+        with tf.variable_scope('RS', reuse=reuse_variables):
             pyramid.append(network(inputs, scale))
 
     net = tf.concat(3, pyramid, name='concat-mr-nrm')
@@ -144,4 +156,4 @@ def multiscale_net(inputs, scales=(1, 2, 4)):
             x /= tf.expand_dims(normalization_matrix, 3)
         return x
 
-    return normalize(net), [normalize(x, i) for i, x in scales]
+    return normalize(net), [normalize(x, i) for x, i in zip(pyramid, scales)]

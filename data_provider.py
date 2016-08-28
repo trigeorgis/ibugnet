@@ -40,28 +40,30 @@ class Dataset(object):
         self.root = Path(root)
         self.batch_size = batch_size
 
-    def preprocess(self, image):
-
     def get_keys(self):
-        return tf.constant([x.stem for x in (self.root / 'images').glob('*')],
-                           tf.string)
+        path = self.root / 'images'
+        keys = [x.stem for x in path.glob('*')]
+        if len(keys) == 0:
+            raise RuntimeError('No images found in {}'.format(path))
+        return tf.constant(keys, tf.string)
 
     def preprocess(self, image):
         return caffe_preprocess(image)
 
-    def get_images(self, index, shape=None):
-        return get_png_images(index, shape)
+    def get_images(self, index, shape=None, subdir='images'):
+        return self._get_images(index, shape=None, subdir='images')
 
-    def get_png_images(self, index, shape=None):
-        path = tf.reduce_join([str(self.root / 'images'), '/', index, '.png'],
+    def _get_images(self, index, shape=None, subdir='images', channels=3, extension='png'):
+        path = tf.reduce_join([str(self.root / subdir), '/', index, '.', extension],
                               0)
-        image = tf.image.decode_png(tf.read_file(path), channels=3)
-        return rescale_image(image)
+        
+        if extension == 'png':
+            image = tf.image.decode_png(tf.read_file(path), channels=channels)
+        elif extension == 'jpg':
+            image = tf.image.decode_jpeg(tf.read_file(path), channels=channels)
+        else:
+            raise RuntimeError()
 
-    def get_jpg_images(self, index, shape=None):
-        path = tf.reduce_join([str(self.root / 'images'), '/', index, '.jpg'],
-                              0)
-        image = tf.image.decode_jpg(tf.read_file(path), channels=3)
         return rescale_image(image)
 
     def get_normals(self, index, shape=None):
@@ -84,7 +86,8 @@ class Dataset(object):
         return rescale_image(normals), rescale_image(mask)
 
     def get_segmentation(self, index, shape=None):
-        return 0, 0
+        res = tf.zeros(shape)
+        return res, res
 
     def get(self, *names):
         producer = tf.train.string_input_producer(self.get_keys(),
@@ -108,12 +111,41 @@ class Dataset(object):
 
         return tf.train.batch(tensors,
                               self.batch_size,
-                              capacity=1000,
+                              capacity=100,
                               dynamic_pad=True)
-
 
 class ICT3DFE(Dataset):
     def __init__(self, batch_size=1):
         self.name = 'ICT3DFE'
         self.batch_size = batch_size
         self.root = Path('data/ict3drfe/')
+        
+class FDDB(Dataset):
+    def __init__(self, batch_size=1):
+        self.name = 'FDDB'
+        self.batch_size = batch_size
+        self.root = Path('data/fddb/')
+
+    def get_images(self, index, shape=None, subdir='images'):
+        return self._get_images(index, shape, subdir=subdir, extension='jpg')
+    
+    def get_segmentation(self, index, shape=None):
+        segmentation = self._get_images(
+            index, shape, subdir='semantic_segmentation', channels=1, extension='png')
+
+        return segmentation, tf.ones_like(segmentation)
+    
+class AFLW(Dataset):
+    def __init__(self, batch_size=1):
+        self.name = 'AFLW'
+        self.batch_size = batch_size
+        self.root = Path('data/aflw/')
+
+    def get_images(self, index, shape=None, subdir='images'):
+        return self._get_images(index, shape, subdir=subdir, extension='jpg')
+    
+    def get_segmentation(self, index, shape=None):
+        segmentation = self._get_images(
+            index, shape, subdir='semantic_segmentation', channels=1, extension='png')
+
+        return segmentation, tf.ones_like(segmentation)
