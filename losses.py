@@ -21,3 +21,9 @@ def smooth_l1(pred, ground_truth):
                      residual - .5)
 
     return tf.reduce_mean(loss, name='smooth_l1')
+
+
+def quaternion_loss(pred, ground_truth):
+    loss = 1 - tf.abs(tf.reduce_sum(pred * ground_truth, 1))
+
+    return tf.reduce_mean(loss)

@@ -26,11 +26,12 @@ tf.app.flags.DEFINE_string('train_dir', 'ckpt/train',
 tf.app.flags.DEFINE_string('pretrained_model_checkpoint_path', '',
                            '''If specified, restore this pretrained model '''
                            '''before beginning any training.''')
-tf.app.flags.DEFINE_integer('max_steps', 10000,
+tf.app.flags.DEFINE_integer('max_steps', 100000,
                             '''Number of batches to run.''')
 tf.app.flags.DEFINE_string('train_device', '/gpu:0',
                            '''Device to train with.''')
 tf.app.flags.DEFINE_string('dataset_path', '', 'Dataset directory')
+
 # The decay to use for the moving average.
 MOVING_AVERAGE_DECAY = 0.9999
 
@@ -39,7 +40,7 @@ def train():
     g = tf.Graph()
     with g.as_default():
         # Load dataset.
-        provider = data_provider.FDDB()
+        provider = data_provider.AFLW()
         images, normals, segmentation = provider.get('normals', 'segmentation')
 
         # Define model graph.
@@ -56,9 +57,9 @@ def train():
             onehot_labels = tf.reshape(segmentation, (-1, 1))
             onehot_labels = tf.concat(1, [1 - onehot_labels, onehot_labels])
             net = tf.reshape(net, (-1, 2))
-            
+
             slim.losses.softmax_cross_entropy(net, onehot_labels)
-            
+
         total_loss = slim.losses.get_total_loss()
         tf.scalar_summary('losses/total loss', total_loss)
 
@@ -75,7 +76,7 @@ def train():
 
         train_op = slim.learning.create_train_op(
             total_loss, optimizer, summarize_gradients=True)
-        
+
         logging.set_verbosity(1)
         slim.learning.train(train_op,
                             FLAGS.train_dir,

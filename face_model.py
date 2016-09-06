@@ -79,11 +79,7 @@ def network(inputs, scale=1, output_classes=3):
 
             net = slim.layers.max_pool2d(net, [3, 3], [1, 1], scope='pool5')
             net = tf.pad(net, ((0, 0), (1, 1), (1, 1), (0, 0)))
-            net = slim.layers.avg_pool2d(net,
-                                         3,
-                                         1,
-                                         padding='VALID',
-                                         scope='cue5')
+            net = slim.layers.avg_pool2d(net, 3, 1, scope='cue5')
 
             # fc6
             net = tf.pad(net, ((0, 0), (12, 12), (12, 12), (0, 0)))
