@@ -4,7 +4,6 @@ import menpo.io as mio
 
 from pathlib import Path
 from scipy.io import loadmat
-from utils_3d import crop_face
 
 def caffe_preprocess(image):
     VGG_MEAN = np.array([102.9801, 115.9465, 122.7717])
@@ -59,7 +58,7 @@ class Dataset(object):
     def _get_images(self, index, shape=None, subdir='images', channels=3, extension='png'):
         path = tf.reduce_join([str(self.root / subdir), '/', index, '.', extension],
                               0)
-        
+
         if extension == 'png':
             image = tf.image.decode_png(tf.read_file(path), channels=channels)
         elif extension == 'jpg':
@@ -117,12 +116,72 @@ class Dataset(object):
                               capacity=100,
                               dynamic_pad=True)
 
+
+class EarWPUTEDB(Dataset):
+    def __init__(self, batch_size=1):
+        self.name = 'EarWPUTEDB'
+        self.batch_size = batch_size
+        self.root = Path('/data/tmp/')
+        self.dataset = mio.import_pickle(str(self.root / 'LDA-WPUTEDB-Data-dsift.pkl'))
+        self.num_classes = 500
+
+    def get_keys(self, path='images'):
+        path = self.root / path
+        keys = map(str, np.arange(len(self.dataset)))
+        print('Found {} files.'.format(len(keys)))
+
+        if len(keys) == 0:
+            raise RuntimeError('No images found in {}'.format(path))
+        return tf.constant(keys, tf.string)
+
+    def get_images(self, key, shape=None):
+        def wrapper(index):
+            return self.dataset[int(index)][1].astype(np.float32)
+
+        image = tf.py_func(wrapper, [key],
+                                   [tf.float32])[0]
+
+        image.set_shape([358272,])
+        return image
+
+    def get_labels(self, key, shape=None):
+        def wrapper(index):
+            return self.dataset[int(index)][0].astype(np.int32)
+
+        label = tf.py_func(wrapper, [key],
+                                   [tf.int32])[0]
+
+        label = tf.one_hot(label, self.num_classes, dtype=tf.int32)
+        label.set_shape([500,])
+        return label, None
+
+    def get(self, *names):
+        producer = tf.train.string_input_producer(self.get_keys(),
+                                                  shuffle=True)
+        key = producer.dequeue()
+        images = self.get_images(key)
+
+        image_shape = tf.shape(images)
+        tensors = [images]
+
+        for name in names:
+            fun = getattr(self, 'get_' + name.split('/')[0])
+            use_mask = (
+                len(name.split('/')) > 1) and name.split('/')[1] == 'mask'
+
+            label, mask = fun(key, shape=image_shape)
+            tensors.append(label)
+
+        return tf.train.shuffle_batch(tensors,
+                              self.batch_size,
+                              capacity=2000, min_after_dequeue=200)
+
 class ICT3DFE(Dataset):
     def __init__(self, batch_size=1):
         self.name = 'ICT3DFE'
         self.batch_size = batch_size
         self.root = Path('data/ict3drfe/')
-        
+
 class FDDB(Dataset):
     def __init__(self, batch_size=1):
         self.name = 'FDDB'
@@ -131,13 +190,13 @@ class FDDB(Dataset):
 
     def get_images(self, index, shape=None, subdir='images'):
         return self._get_images(index, shape, subdir=subdir, extension='jpg')
-    
+
     def get_segmentation(self, index, shape=None):
         segmentation = self._get_images(
             index, shape, subdir='semantic_segmentation', channels=1, extension='png')
 
         return segmentation, tf.ones_like(segmentation)
-    
+
 class AFLW(Dataset):
     def __init__(self, batch_size=1):
         self.name = 'AFLW'
@@ -146,14 +205,14 @@ class AFLW(Dataset):
 
     def get_images(self, index, shape=None, subdir='images'):
         return self._get_images(index, shape, subdir=subdir, extension='jpg')
-    
+
     def get_segmentation(self, index, shape=None):
         segmentation = self._get_images(
             index, shape, subdir='semantic_segmentation', channels=1, extension='png')
 
         return segmentation, tf.ones_like(segmentation)
-    
-    
+
+
 class AFLWSingle(Dataset):
     def __init__(self, batch_size=1):
         from menpo.transform import UniformScale, Translation, Homogeneous, scale_about_centre, Rotation
@@ -171,16 +230,16 @@ class AFLWSingle(Dataset):
         self.lms_extension = '.ljson'
 
     def get_keys(self, path='images'):
-        
+
         path = self.root / path
         lms_files = path.glob('*' + self.lms_extension)
         keys = [] # ['face_55135', 'face_49348']
-        
+
         # Get only files with 68 landmarks
         for p in lms_files:
             try:
                 lms = mio.import_landmark_file(p)
-                
+
                 if lms.n_landmarks == 68:
                     keys.append(lms.path.stem)
             except:
@@ -199,7 +258,7 @@ class AFLWSingle(Dataset):
 
             im = mio.import_image(path, normalize=False)
             im = crop_face(im)
-            
+
             view_t, c_t, proj_t = retrieve_camera_matrix(im, self.template, group=None)
             h = view_t.h_matrix
             vector = self.eigenvectors.dot(h.ravel() - self.h_mean)
@@ -209,17 +268,17 @@ class AFLWSingle(Dataset):
                 vector = np.array([0, 0, 0])
 
             px = im.pixels_with_channels_at_back()
-            
+
             if len(px.shape) == 2:
                 px = px[..., None]
-        
+
             if px.shape[2] == 1:
                 px = np.dstack([px, px, px])
 
             if px.shape[2] == 4:
                 px = px[..., :3]
-            
-            
+
+
             return px.astype(np.float32), vector.astype(np.float32)
 
         images, parameters = tf.py_func(wrapper, [index],
@@ -237,7 +296,7 @@ class AFLWSingle(Dataset):
 
             im = mio.import_image(path, normalize=False)
             im = crop_face(im)
-            
+
             view_t, c_t, proj_t = retrieve_camera_matrix(im, self.template, group=None)
 
             h = view_t.h_matrix.copy()
@@ -252,10 +311,10 @@ class AFLWSingle(Dataset):
                 q = np.zeros((4, ))
                 translation = np.zeros((3, ))
             px = im.pixels_with_channels_at_back()
-            
+
             if len(px.shape) == 2:
                 px = px[..., None]
-        
+
             if px.shape[2] == 1:
                 px = np.dstack([px, px, px])
 
