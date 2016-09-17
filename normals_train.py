@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-import face_model
+import resnet_model
 import losses
 import data_provider
 import utils
@@ -26,6 +26,11 @@ tf.app.flags.DEFINE_string('train_dir', 'ckpt/train',
 tf.app.flags.DEFINE_string('pretrained_model_checkpoint_path', '',
                            '''If specified, restore this pretrained model '''
                            '''before beginning any training.''')
+tf.app.flags.DEFINE_string(
+    'pretrained_resnet_checkpoint_path', '',
+    '''If specified, restore this pretrained resnet '''
+    '''before beginning any training.'''
+    '''This restores only the weights of the resnet model''')
 tf.app.flags.DEFINE_integer('max_steps', 100000,
                             '''Number of batches to run.''')
 tf.app.flags.DEFINE_string('train_device', '/gpu:0',
@@ -34,6 +39,21 @@ tf.app.flags.DEFINE_string('dataset_path', '', 'Dataset directory')
 
 # The decay to use for the moving average.
 MOVING_AVERAGE_DECAY = 0.9999
+
+
+def restore_resnet(sess, path):
+    def name_in_checkpoint(var):
+        name = '/'.join(var.name.split('/')[2:])
+        name = name.split(':')[0]
+        return name
+
+    variables_to_restore = slim.get_variables_to_restore(
+        include=["net/multiscale/resnet_v1_50"])
+    variables_to_restore = {name_in_checkpoint(var): var
+                            for var in variables_to_restore}
+
+    saver = tf.train.Saver(variables_to_restore)
+    saver.restore(sess, path)
 
 
 def train():
@@ -45,8 +65,9 @@ def train():
 
         # Define model graph.
         with tf.variable_scope('net'):
-            with slim.arg_scope([slim.batch_norm, slim.layers.dropout], is_training=True):
-                prediction, pyramid = face_model.multiscale_nrm_net(images)
+            with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
+                                is_training=True):
+                prediction, pyramid = resnet_model.multiscale_nrm_net(images)
 
         # Add a smoothed l1 loss to every scale and the combined output.
         for net in [prediction] + pyramid:
@@ -59,18 +80,22 @@ def train():
         optimizer = tf.train.AdamOptimizer(FLAGS.initial_learning_rate)
 
     with tf.Session(graph=g) as sess:
-        saver = tf.train.Saver([v for v in tf.trainable_variables() if 'seg' not in v.name and 'nrm' not in v.name])
+
+        if FLAGS.pretrained_resnet_checkpoint_path:
+            restore_resnet(sess, FLAGS.pretrained_resnet_checkpoint_path)
 
         if FLAGS.pretrained_model_checkpoint_path:
+            variables_to_restore = slim.get_variables_to_restore()
+            saver = tf.train.Saver(variables_to_restore)
             saver.restore(sess, FLAGS.pretrained_model_checkpoint_path)
 
-        train_op = slim.learning.create_train_op(
-            total_loss, optimizer, summarize_gradients=True)
+        train_op = slim.learning.create_train_op(total_loss,
+                                                 optimizer,
+                                                 summarize_gradients=True)
 
         logging.set_verbosity(1)
         slim.learning.train(train_op,
                             FLAGS.train_dir,
-                            # train_step_fn=train_step_fn,
                             save_summaries_secs=60,
                             save_interval_secs=600)
 

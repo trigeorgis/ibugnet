@@ -31,7 +31,7 @@ def rescale_image(image, stride_width=64):
     new_width = tf.to_int32(new_width)
 
     images = tf.expand_dims(image, 0)
-    images = tf.image.resize_images(images, new_height, new_width)
+    images = tf.image.resize_images(images, (new_height, new_width))
     return images[0, :, :, :]
 
 
