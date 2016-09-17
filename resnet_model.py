@@ -66,16 +66,16 @@ def network(inputs, scale, output_classes=3):
 
     with slim.arg_scope(nets.resnet_v1.resnet_arg_scope()):
         net, endpoints = nets.resnet_v1.resnet_v1_50(inputs, global_pool=False)
-    scope_name = [c[:-5] for c in endpoints.keys() if '50/conv1' in c][0]
+
+    scope_name = '/'.join(net.name.split('/')[:3])
 
     skip_connections = []
 
-    # print(endpoints.keys())
-    # skip_connections = [
-    #     endpoints[scope_name + x] for x in [
-    #         'conv1', 'block1'
-    #     ]
-    # ]
+    skip_connections = [
+        endpoints[scope_name + '/' + x] for x in [
+            'conv1', 'block2/unit_4/bottleneck_v1/conv1', 'block3/unit_6/bottleneck_v1/conv1'
+        ]
+    ]
 
     skip_connections.append(net)
     skip_connections = [add_batchnorm_layers(i, x) for i, x in enumerate(skip_connections)]
