@@ -1,8 +1,9 @@
 import numpy as np
-import cv2
+
 import math
 
 from menpo.transform import UniformScale, Translation, Homogeneous, scale_about_centre, Rotation
+from menpo.shape import PointCloud
 
 # epsilon for testing whether a number is close to zero
 _EPS = np.finfo(float).eps * 4.0
@@ -130,6 +131,8 @@ def euler_from_matrix(matrix, axes='sxyz'):
     return ax, ay, az
 
 def retrieve_camera_matrix(image, mesh, group=None, initialize=True):
+    import cv2
+    
     drop_h = Homogeneous(np.eye(4)[:3])
     flip_xy_yx = Homogeneous(np.array([[0, 1, 0],
                                        [1, 0, 0],
@@ -212,6 +215,9 @@ def duplicate_vertices(mesh):
 
 def crop_face(img, boundary=50, group=None):
     pc = img.landmarks[group].lms
+    nan_points = np.any(np.isnan(pc.points).reshape(-1, 2), 1)
+
+    pc = PointCloud(pc.points[~nan_points, :])
     min_indices, max_indices = pc.bounds(boundary=boundary)
     h = max_indices[0] - min_indices[0]
     w = max_indices[1] - min_indices[1]
@@ -221,9 +227,12 @@ def crop_face(img, boundary=50, group=None):
         index = 1 - int(w > h)
         min_indices[index] -= int(pad / 2.)
         max_indices[index] += int(pad / 2.) + int(pad) % 2
+        # min_indices[min_indices < 0] = 0
+        # max_indices[max_indices >= max(h, w)] = max(h, w) - 1
+
         img = img.crop(min_indices, max_indices, constrain_to_boundary=True)
     except Exception as e:
-        print(e)
+        print("Exception in crop_face", e)
 
     img = img.resize((256, 256))
     return img

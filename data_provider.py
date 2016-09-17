@@ -71,7 +71,7 @@ class Dataset(object):
 
     def get_normals(self, index, shape=None):
         def wrapper(index, shape):
-            path = self.root / 'normals' / (index + '.mat')
+            path = self.root / 'normals' / (str(index) + '.mat')
 
             if path.exists():
                 normals = loadmat(str(path))['norms'].astype(np.float32)
@@ -329,6 +329,61 @@ class LFPWSingle(AFLWSingle):
         self.image_extension = '.png'
         self.lms_extension = '.pts'
 
+class Deep3DV1(Dataset):
+    def __init__(self, batch_size=32):
+        self.name = 'JamesRenders'
+        self.batch_size = batch_size
+        self.root = Path('/data/datasets/renders/v1')
+        self.tfrecord_names = ['train_v2.tfrecords']
+        self.model = mio.import_pickle('/vol/construct3dmm/experiments/models/nicp/mein3d/full_unmasked_good_200.pkl')['model']
+        self.settings = mio.import_pickle('/vol/construct3dmm/experiments/nicptexture/settings.pkl', encoding='latin1')
+
+    def get(self):
+        paths = [str(self.root / x) for x in self.tfrecord_names]
+        
+        filename_queue = tf.train.string_input_producer(paths)
+        reader = tf.TFRecordReader()
+        _, serialized_example = reader.read(filename_queue)
+        features = tf.parse_single_example(
+            serialized_example,
+            # Defaults are not specified since both keys are required.
+            features={
+                'uv_height': tf.FixedLenFeature([], tf.int64),
+                'uv_width': tf.FixedLenFeature([], tf.int64),
+                'parameters': tf.FixedLenFeature([], tf.string),
+                'transform': tf.FixedLenFeature([], tf.string),
+                'name': tf.FixedLenFeature([], tf.string),
+                'uv': tf.FixedLenFeature([], tf.string),
+                'rendering': tf.FixedLenFeature([], tf.string),
+            })
+
+        image = tf.image.decode_jpeg(features['rendering'])
+        uv = tf.image.decode_jpeg(features['uv'])
+        image = tf.to_float(image)
+        image.set_shape((256, 256, 3))
+        uv.set_shape((2007, 3164, 3))
+
+        parameters = tf.decode_raw(features['parameters'], tf.float32)
+        transform = tf.decode_raw(features['transform'], tf.float32)
+        parameters.set_shape((200))
+
+#         parameters = tf.expand_dims(parameters, 0)
+
+#         n_vertices = self.model._mean.shape[0] // 3
+#         h = tf.matmul(parameters, self.model.components.astype(np.float32)) +self. model._mean.astype(np.float32)
+#         h = tf.reshape(h, (n_vertices, 3))
+#         h = tf.concat(1, [h, tf.ones((n_vertices, 1))])
+#         h = tf.matmul(h, tf.reshape(transform, (4, 4)), transpose_b=True)
+#         h = (h / tf.expand_dims(h[:, 3], 1))[:, :3]
+
+        parameters /= 10000.
+        return tf.train.shuffle_batch([image, uv, parameters ],
+                              self.batch_size,
+                              capacity=1000,
+                              num_threads=3,
+                              min_after_dequeue=200)
+        
+    
 class JamesRenders(Dataset):
     def __init__(self, batch_size=32):
         self.name = 'JamesRenders'

@@ -45,12 +45,14 @@ def restore_resnet(sess, path):
     def name_in_checkpoint(var):
         name = '/'.join(var.name.split('/')[2:])
         name = name.split(':')[0]
+        if 'Adam' in name:
+            return None
         return name
 
     variables_to_restore = slim.get_variables_to_restore(
         include=["net/multiscale/resnet_v1_50"])
     variables_to_restore = {name_in_checkpoint(var): var
-                            for var in variables_to_restore}
+                            for var in variables_to_restore if name_in_checkpoint(var) is not None}
 
     saver = tf.train.Saver(variables_to_restore)
     saver.restore(sess, path)
@@ -67,7 +69,7 @@ def train():
         with tf.variable_scope('net'):
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
                                 is_training=True):
-                prediction, pyramid = resnet_model.multiscale_nrm_net(images)
+                prediction, pyramid = resnet_model.multiscale_nrm_net(images, scales=(1, 2, 4))
 
         # Add a smoothed l1 loss to every scale and the combined output.
         for net in [prediction] + pyramid:

@@ -41,7 +41,7 @@ def resnet_arg_scope(weight_decay=0.0001,
                 return arg_sc
 
 
-def add_batchnorm_layers((i, net)):
+def add_batchnorm_layers(i, net):
     name = "{}_skip_{}".format(net.name.split('/')[-2], i)
     net = slim.batch_norm(net,
                           center=False,
@@ -77,8 +77,8 @@ def network(inputs, scale, output_classes=3):
     #     ]
     # ]
 
-    skip_connections = map(add_batchnorm_layers, enumerate(skip_connections))
     skip_connections.append(net)
+    skip_connections = [add_batchnorm_layers(i, x) for i, x in enumerate(skip_connections)]
 
     skip_connections = [
         tf.image.resize_bilinear(x, out_shape,
@@ -92,23 +92,6 @@ def network(inputs, scale, output_classes=3):
                        output_classes, (1, 1),
                        scope='upscore-fuse-nrm__00',
                        activation_fn=None)
-
-
-def multiscale_seg_net(inputs, scales=(1, 2, 4)):
-    pyramid = []
-
-    for scale in scales:
-        reuse_variables = scale != scales[0]
-        with tf.variable_scope('scale', reuse=reuse_variables):
-            pyramid.append(network(inputs, scale, output_classes=2))
-
-    net = tf.concat(3, pyramid, name='concat-mr-seg')
-    net = slim.conv2d(net,
-                      2, (1, 1),
-                      scope='upscore-fuse-mr-seg',
-                      activation_fn=None)
-
-    return net, pyramid
 
 
 def multiscale_nrm_net(inputs, scales=(1, 2, 4)):
