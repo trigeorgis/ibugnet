@@ -69,16 +69,17 @@ def network(inputs, scale, output_classes=3):
 
     scope_name = '/'.join(net.name.split('/')[:3])
 
-    skip_connections = []
-
     skip_connections = [
         endpoints[scope_name + '/' + x] for x in [
             'conv1', 'block2/unit_4/bottleneck_v1/conv1', 'block3/unit_6/bottleneck_v1/conv1'
         ]
     ]
 
+    net = slim.layers.conv2d(net, 1024, (3, 3), rate=12, scope='upsample_conv')
+
     skip_connections.append(net)
     skip_connections = [add_batchnorm_layers(i, x) for i, x in enumerate(skip_connections)]
+    skip_connections.append(inputs)
 
     skip_connections = [
         tf.image.resize_bilinear(x, out_shape,
@@ -92,6 +93,24 @@ def network(inputs, scale, output_classes=3):
                        output_classes, (1, 1),
                        scope='upscore-fuse-nrm__00',
                        activation_fn=None)
+
+
+def multiscale_kpts_net(inputs, scales=(1, 2, 4), num_keypoints=69):
+    pyramid = []
+
+    for scale in scales:
+        reuse_variables = scale != scales[0]
+        with tf.variable_scope('multiscale', reuse=reuse_variables):
+            pyramid.append(network(inputs, scale, output_classes=num_keypoints))
+
+    net = tf.concat(3, pyramid, name='concat-mr-kpts')
+    net = slim.conv2d(net,
+                      num_keypoints, (1, 1),
+                      scope='upscore-fuse-mr-kpts',
+                      activation_fn=None)
+
+
+    return net, pyramid
 
 
 def multiscale_nrm_net(inputs, scales=(1, 2, 4)):

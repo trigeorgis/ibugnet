@@ -9,8 +9,8 @@ def smooth_l1(pred, ground_truth):
     Girshick's Fast R-CNN, ICCV 2015 paper.
 
     Args:
-      pred: A tf Tensor of dimensions [num_images, height, width, 3].
-      ground_truth: A tf Tensor of dimensions [num_images, height, width, 3].
+      pred: A `Tensor` of dimensions [num_images, height, width, 3].
+      ground_truth: A `Tensor` of dimensions [num_images, height, width, 3].
     Returns:
       A scalar with the mean loss.
     """
@@ -24,6 +24,32 @@ def smooth_l1(pred, ground_truth):
 
 
 def quaternion_loss(pred, ground_truth):
+    '''Computes the half cosine distance between two quaternions.
+    
+    Assumes that the quaternions are l2 normalised.
+
+    Args:
+      pred: A `Tensor` of dimensions [num_images, 4]
+      ground_truth: A `Tensor` of dimensions [num_images, 4].
+    Returns:
+      A scalar with the mean cosine loss.
+    '''
     loss = 1 - tf.abs(tf.reduce_sum(pred * ground_truth, 1))
 
     return tf.reduce_mean(loss)
+
+
+def cosine_loss(pred, ground_truth, dim=3):
+    '''Computes the cosine distance between two images.
+    
+    Assumes that the input images are l2 normalised per pixel.
+
+    Args:
+      pred: A `Tensor` of dimensions [num_images, height, width, 3]
+      ground_truth: A `Tensor` of dimensions [num_images, height, width, 3].
+    Returns:
+      A scalar with the mean angular error (cosine loss).
+    '''
+    loss = 1 - tf.reduce_sum(pred * ground_truth, dim)
+
+    return tf.reduce_mean(loss, name='cosine_loss')

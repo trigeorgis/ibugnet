@@ -35,7 +35,6 @@ tf.app.flags.DEFINE_integer('max_steps', 100000,
                             '''Number of batches to run.''')
 tf.app.flags.DEFINE_string('train_device', '/gpu:0',
                            '''Device to train with.''')
-tf.app.flags.DEFINE_string('dataset_path', '', 'Dataset directory')
 
 # The decay to use for the moving average.
 MOVING_AVERAGE_DECAY = 0.9999
@@ -71,9 +70,9 @@ def train():
                                 is_training=True):
                 prediction, pyramid = resnet_model.multiscale_nrm_net(images, scales=(1, 2, 4))
 
-        # Add a smoothed l1 loss to every scale and the combined output.
+        # Add a cosine loss to every scale and the combined output.
         for net in [prediction] + pyramid:
-            loss = losses.smooth_l1(net, normals)
+            loss = losses.cosine_loss(net, normals)
             slim.losses.add_loss(loss)
 
         total_loss = slim.losses.get_total_loss()
