@@ -74,11 +74,14 @@ def train():
         # Add a cosine loss to every scale and the combined output.
         for net, level_name in zip([prediction] + pyramid, ['pred'] + scales):
             loss = losses.smooth_l1(net, deblurred)
+            slim.losses.add_loss(loss)
             tf.scalar_summary('losses/loss at {}'.format(level_name), loss)
 
         total_loss = slim.losses.get_total_loss()
         tf.scalar_summary('losses/total loss', total_loss)
-        tf.image_summary('images', tf.concat(2, [images, deblurred]))
+        tf.image_summary('blurred', images)
+        tf.image_summary('deblurred', deblurred)
+        tf.image_summary('pred', prediction)
 
         optimizer = tf.train.AdamOptimizer(FLAGS.initial_learning_rate)
 

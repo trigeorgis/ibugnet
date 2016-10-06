@@ -153,7 +153,7 @@ class Deblurring(Dataset):
         images = self._get_images(index, shape, subdir=subdir, extension='jpg')
         images_size = tf.shape(images)
 
-        images = tf.image.resize_images(images, (100, 100))
+        images = tf.image.resize_images(images, (50, 50))
         images = tf.image.resize_images(images, images_size[:2])
 
         return images
