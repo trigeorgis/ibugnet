@@ -40,6 +40,7 @@ class Dataset(object):
         self.name = name
         self.root = Path(root)
         self.batch_size = batch_size
+        self.image_extension = 'png'
 
     def num_samples(self):
         return len(self._keys)
@@ -59,7 +60,7 @@ class Dataset(object):
         return caffe_preprocess(image)
 
     def get_images(self, index, shape=None, subdir='images'):
-        return self._get_images(index, shape=None, subdir='images')
+        return self._get_images(index, shape=None, subdir='images', extension=self.image_extension)
 
     def _get_images(self, index, shape=None, subdir='images', channels=3, extension='png'):
         path = tf.reduce_join([str(self.root / subdir), '/', index, '.', extension],
@@ -79,8 +80,9 @@ class Dataset(object):
             path = self.root / 'normals' / "{}.mat".format(index.decode("utf-8"))
 
             if path.exists():
-                normals = loadmat(str(path))['norms'].astype(np.float32)
-                mask = np.ones(list(shape[:2]) + [1]).astype(np.float32)
+                mat = loadmat(str(path))
+                normals = mat['norms'].astype(np.float32)
+                mask = mat['cert'][..., None].astype(np.float32)
                 return normals, mask
 
             normals = np.zeros(shape).astype(np.float32)
@@ -129,12 +131,45 @@ class ICT3DFE(Dataset):
         self.name = 'ICT3DFE'
         self.batch_size = batch_size
         self.root = Path('data/ict3drfe/')
+        self.image_extension = 'png'
+
         
+class BaselNormals(Dataset):
+    def __init__(self, batch_size=1):
+        self.name = '3ddfa_basel'
+        self.batch_size = batch_size
+        self.root = Path('/data/datasets/3ddfa_basel_normals')
+        self.image_extension = 'jpg'
+
+
+class Deblurring(Dataset):
+    def __init__(self, batch_size=1):
+        self.name = 'FDDB'
+        self.batch_size = batch_size
+        self.root = Path('data/fddb/')
+        self.image_extension = 'png'
+
+    def get_images(self, index, shape=None, subdir='images'):
+        images = self._get_images(index, shape, subdir=subdir, extension='jpg')
+        images_size = tf.shape(images)
+
+        images = tf.image.resize_images(images, (100, 100))
+        images = tf.image.resize_images(images, images_size[:2])
+
+        return images
+
+    def get_deblurred(self, index, shape=None):
+        deblurred = self._get_images(index, shape, subdir='images', extension='jpg')
+        deblurred = tf.to_float(deblurred) / 255.
+        return deblurred, tf.ones_like(deblurred)
+
+
 class FDDB(Dataset):
     def __init__(self, batch_size=1):
         self.name = 'FDDB'
         self.batch_size = batch_size
         self.root = Path('data/fddb/')
+        self.image_extension = 'png'
 
     def get_images(self, index, shape=None, subdir='images'):
         return self._get_images(index, shape, subdir=subdir, extension='jpg')
@@ -153,10 +188,6 @@ class AFLW(Dataset):
         self.lms_root = self.root / 'landmarks'
         self.lms_extension = 'ljson'
         self.image_extension = 'jpg'
-
-    def get_images(self, index, shape=None, subdir='images'):
-        return self._get_images(index, shape, subdir=subdir, extension='jpg')
-
 
     def get_keypoints(self, index, shape):
         def wrapper(index, shape):
