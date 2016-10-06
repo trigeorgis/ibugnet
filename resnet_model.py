@@ -113,6 +113,23 @@ def multiscale_kpts_net(inputs, scales=(1, 2, 4), num_keypoints=69):
     return net, pyramid
 
 
+def multiscale_deblurring_net(inputs, scales=(1, 2, 4)):
+    pyramid = []
+
+    for scale in scales:
+        reuse_variables = scale != scales[0]
+        with tf.variable_scope('multiscale', reuse=reuse_variables):
+            pyramid.append(network(inputs, scale, output_classes=3))
+
+    net = tf.concat(3, pyramid, name='concat-mr-nrm')
+    net = slim.conv2d(net,
+                      3, (1, 1),
+                      scope='upscore-fuse-mr-nrm',
+                      activation_fn=None)
+
+
+    return net, pyramid
+
 def multiscale_nrm_net(inputs, scales=(1, 2, 4)):
     pyramid = []
 

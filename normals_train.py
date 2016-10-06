@@ -60,20 +60,24 @@ def restore_resnet(sess, path):
 def train():
     g = tf.Graph()
     with g.as_default():
-        # Load dataset.
-        provider = data_provider.ICT3DFE()
-        images, normals = provider.get('normals')
+        # Load datasets.
+        # provider = data_provider.ICT3DFE()
+        # images, normals = provider.get('normals')
+
+        provider = data_provider.BaselNormals()
+        images, normals, mask = provider.get('normals/mask')
 
         # Define model graph.
         with tf.variable_scope('net'):
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
                                 is_training=True):
-                prediction, pyramid = resnet_model.multiscale_nrm_net(images, scales=(1, 2, 4))
+                scales = [1, 2, 4]
+                prediction, pyramid = resnet_model.multiscale_nrm_net(images, scales=scales)
 
         # Add a cosine loss to every scale and the combined output.
-        for net in [prediction] + pyramid:
-            loss = losses.cosine_loss(net, normals)
-            slim.losses.add_loss(loss)
+        for net, level_name in zip([prediction] + pyramid, ['pred'] + scales):
+            loss = losses.cosine_loss(net, normals, mask[:, :, :, 0])
+            tf.scalar_summary('losses/loss at {}'.format(level_name), loss)
 
         total_loss = slim.losses.get_total_loss()
         tf.scalar_summary('losses/total loss', total_loss)
