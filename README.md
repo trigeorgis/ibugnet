@@ -28,7 +28,7 @@ channel:
 dependencies following the [installation
 instructions](https://www.tensorflow.org/versions/r0.10/get_started/index.html).
 
-We have build a wheel file for the lab machines which is
+We have build a wheel file for the lab machines which you can install by
 ```console
 (ibugnet) pip install --ignore-installed --upgrade /vol/atlas/homes/gt108/pretrained_models/tensorflow-0.11.0rc0-py3-none-any.whl
 ```
