@@ -40,4 +40,5 @@ We have build a wheel file for the lab machines which is
 # Pretrained models
 ## Keypoint estimation
 
-/vol/atlas/homes/gt108/pretrained_models/keypoints/69_classes
+[Notebook](https://github.com/trigeorgis/ibugnet/blob/master/conv_dpm/Demo%20Keypoints.ipynb)
+Path: ``/vol/atlas/homes/gt108/pretrained_models/keypoints/69_classes``
