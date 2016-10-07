@@ -36,17 +36,19 @@ def rescale_image(image, stride_width=64, method=0):
 
 
 class Dataset(object):
+    
     def __init__(self, name, root, batch_size=1):
         self.name = name
         self.root = Path(root)
         self.batch_size = batch_size
         self.image_extension = 'png'
+        self.images_root = 'images'
 
     def num_samples(self):
         return len(self._keys)
 
-    def get_keys(self, path='images'):
-        path = self.root / path
+    def get_keys(self):
+        path = self.root / self.images_root
         keys = [str(x.stem) for x in path.glob('*')]
         self._keys = keys
 
@@ -59,8 +61,8 @@ class Dataset(object):
     def preprocess(self, image):
         return caffe_preprocess(image)
 
-    def get_images(self, index, shape=None, subdir='images'):
-        return self._get_images(index, shape=None, subdir='images', extension=self.image_extension)
+    def get_images(self, index, shape=None):
+        return self._get_images(index, shape=None, subdir=self.images_root, extension=self.image_extension)
 
     def _get_images(self, index, shape=None, subdir='images', channels=3, extension='png'):
         path = tf.reduce_join([str(self.root / subdir), '/', index, '.', extension],
@@ -99,14 +101,16 @@ class Dataset(object):
         res = tf.zeros(shape)
         return res, res
 
-    def get(self, *names):
+    def get(self, *names, preprocess_inputs=True):
         producer = tf.train.string_input_producer(self.get_keys(),
                                                   shuffle=True)
         key = producer.dequeue()
         images = self.get_images(key)
         image_shape = tf.shape(images)
         images = rescale_image(images)
-        images = self.preprocess(images)
+        
+        if preprocess_inputs:
+            images = self.preprocess(images)
         
         tensors = [images]
 
@@ -128,25 +132,27 @@ class Dataset(object):
 
 class ICT3DFE(Dataset):
     def __init__(self, batch_size=1):
-        self.name = 'ICT3DFE'
-        self.batch_size = batch_size
-        self.root = Path('data/ict3drfe/')
+        super().__init__(name='ICT3DFE', root=Path('data/ict3drfe/'), batch_size=batch_size)
         self.image_extension = 'png'
 
-        
+class Photoface(Dataset):
+    def __init__(self, batch_size=1):
+        super().__init__('photoface', Path('data/photoface/'), batch_size=batch_size)
+        self.image_extension = 'png'
+        self.images_root = 'albedo'
+
+
 class BaselNormals(Dataset):
     def __init__(self, batch_size=1):
-        self.name = '3ddfa_basel'
-        self.batch_size = batch_size
-        self.root = Path('/data/datasets/3ddfa_basel_normals')
+        super().__init__(
+            '3ddfa_basel',
+            Path('/data/datasets/3ddfa_basel_normals'), batch_size=batch_size)
         self.image_extension = 'jpg'
 
 
 class Deblurring(Dataset):
     def __init__(self, batch_size=1):
-        self.name = 'FDDB'
-        self.batch_size = batch_size
-        self.root = Path('data/fddb/')
+        super().__init__('FDDB', Path('data/fddb/'), batch_size)
         self.image_extension = 'png'
 
     def get_images(self, index, shape=None, subdir='images'):
@@ -166,9 +172,7 @@ class Deblurring(Dataset):
 
 class FDDB(Dataset):
     def __init__(self, batch_size=1):
-        self.name = 'FDDB'
-        self.batch_size = batch_size
-        self.root = Path('data/fddb/')
+        super().__init__('FDDB', Path('data/fddb/'), batch_size)
         self.image_extension = 'png'
 
     def get_images(self, index, shape=None, subdir='images'):
@@ -182,8 +186,8 @@ class FDDB(Dataset):
     
 class AFLW(Dataset):
     def __init__(self, batch_size=1):
+        super().__init__(batch_size)
         self.name = 'AFLW'
-        self.batch_size = batch_size
         self.root = Path('data/aflw/')
         self.lms_root = self.root / 'landmarks'
         self.lms_extension = 'ljson'
@@ -273,9 +277,7 @@ def get_pixels(im, channels=3):
 
 class AFLWSingle(Dataset):
     def __init__(self, batch_size=1):
-        self.name = 'AFLW'
-        self.batch_size = batch_size
-        self.root = Path('/vol/atlas/databases/aflw_ibug')
+        super().__init__('AFLW', Path('/vol/atlas/databases/aflw_ibug'), batch_size)
         self.image_extension = '.jpg'
         self.lms_extension = '.ljson'
 
@@ -348,11 +350,11 @@ class AFLWSingle(Dataset):
     
 class FDDBSingle(AFLWSingle):
     def __init__(self, batch_size=1):
+        super().__init__(batch_size)
         from menpo.transform import Translation, scale_about_centre
         import menpo3d.io as m3dio
 
         self.name = 'FDDB'
-        self.batch_size = batch_size
         self.root = Path('/vol/atlas/databases/fddb_ibug')
         template = m3dio.import_mesh('/vol/construct3dmm/regression/src/template.obj')
         template = Translation(-template.centre()).apply(template)
@@ -364,6 +366,8 @@ class FDDBSingle(AFLWSingle):
 
 class LFPWSingle(AFLWSingle):
     def __init__(self, batch_size=1):
+        super().__init__(batch_size)
+
         from menpo.transform import Translation, scale_about_centre
         import menpo3d.io as m3dio
 
