@@ -2,7 +2,7 @@ import tensorflow as tf
 slim = tf.contrib.slim
 
 
-def smooth_l1(pred, ground_truth):
+def smooth_l1(pred, ground_truth, weights=1):
     """Defines a robust L1 loss.
 
     This is a robust L1 loss that is less sensitive to outliers
@@ -12,6 +12,8 @@ def smooth_l1(pred, ground_truth):
     Args:
       pred: A `Tensor` of dimensions [num_images, height, width, 3].
       ground_truth: A `Tensor` of dimensions [num_images, height, width, 3].
+      weights: A `Tensor` of dimensions [num_images,] or a scalar with the
+          weighting per image.
     Returns:
       A scalar with the mean loss.
     """
@@ -21,7 +23,7 @@ def smooth_l1(pred, ground_truth):
                      0.5 * tf.square(residual),
                      residual - .5)
 
-    return tf.reduce_mean(loss, name='smooth_l1')
+    return slim.losses.compute_weighted_loss(loss, weights)
 
 
 def quaternion_loss(pred, ground_truth, weights=None):
@@ -52,4 +54,10 @@ def cosine_loss(pred, ground_truth, weights=None, dim=3):
       A scalar with the mean angular error (cosine loss).
     '''
     loss = 1 - tf.reduce_sum(pred * ground_truth, dim)
+    return slim.losses.compute_weighted_loss(loss, weights)
+
+def normalized_rmse(pred, gt_truth, weights=1):
+    '''Computes the error normalised by the interocular distance.'''
+    norm = tf.sqrt(tf.reduce_sum(((gt_truth[:, 36, :] - gt_truth[:, 45, :])**2), 1))
+    loss = tf.reduce_sum(tf.sqrt(tf.reduce_sum(tf.square(pred - gt_truth), 2)), 1) / (norm * 68)
     return slim.losses.compute_weighted_loss(loss, weights)

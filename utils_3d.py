@@ -213,7 +213,7 @@ def duplicate_vertices(mesh):
     return TriMesh(new_points, trilist=new_trilist), old_to_new
 
 
-def crop_face(img, boundary=50, group=None):
+def crop_face(img, boundary=50, group=None, shape=(256, 256)):
     pc = img.landmarks[group].lms
     nan_points = np.any(np.isnan(pc.points).reshape(-1, 2), 1)
 
@@ -234,5 +234,5 @@ def crop_face(img, boundary=50, group=None):
     except Exception as e:
         print("Exception in crop_face", e)
 
-    img = img.resize((256, 256))
+    img = img.resize(shape)
     return img

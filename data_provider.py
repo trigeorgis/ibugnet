@@ -17,7 +17,7 @@ def caffe_preprocess(image):
     return image
 
 
-def rescale_image(image, stride_width=64, method=0):
+def _rescale_image(image, stride_width=64, method=0):
     # make sure smallest size is 600 pixels wide & dimensions are (k * stride_width) + 1
     height = tf.to_float(tf.shape(image)[0])
     width = tf.to_float(tf.shape(image)[1])
@@ -43,6 +43,9 @@ class Dataset(object):
         self.batch_size = batch_size
         self.image_extension = 'png'
         self.images_root = 'images'
+
+    def rescale_image(self, image, method=0):
+        return _rescale_image(image, method=0)
 
     def num_samples(self):
         return len(self._keys)
@@ -75,7 +78,7 @@ class Dataset(object):
         else:
             raise RuntimeError()
 
-        return image
+        return tf.to_float(image)
 
     def get_normals(self, index, shape=None):
         def wrapper(index, shape):
@@ -107,7 +110,7 @@ class Dataset(object):
         key = producer.dequeue()
         images = self.get_images(key)
         image_shape = tf.shape(images)
-        images = rescale_image(images)
+        images = self.rescale_image(images)
         
         if preprocess_inputs:
             images = self.preprocess(images)
@@ -120,10 +123,10 @@ class Dataset(object):
                 len(name.split('/')) > 1) and name.split('/')[1] == 'mask'
 
             label, mask = fun(key, shape=image_shape)
-            tensors.append(rescale_image(label, method=1))
+            tensors.append(self.rescale_image(label, method=1))
 
             if use_mask:
-                tensors.append(rescale_image(mask, method=1))
+                tensors.append(self.rescale_image(mask, method=1))
 
         return tf.train.batch(tensors,
                               self.batch_size,
@@ -134,13 +137,21 @@ class ICT3DFE(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(name='ICT3DFE', root=Path('data/ict3drfe/'), batch_size=batch_size)
         self.image_extension = 'png'
+    
+    def get_normals(self, index, shape=None):
+        normals, mask = super().get_normals(index, shape)
+        return normals * np.array([1, 1, 1]), mask
 
+    
 class Photoface(Dataset):
     def __init__(self, batch_size=1):
         super().__init__('photoface', Path('data/photoface/'), batch_size=batch_size)
         self.image_extension = 'png'
         self.images_root = 'albedo'
 
+    def get_normals(self, index, shape=None):
+        normals, mask = super().get_normals(index, shape)
+        return normals * np.array([1, -1, 1]), mask
 
 class BaselNormals(Dataset):
     def __init__(self, batch_size=1):
@@ -148,6 +159,45 @@ class BaselNormals(Dataset):
             '3ddfa_basel',
             Path('/data/datasets/3ddfa_basel_normals'), batch_size=batch_size)
         self.image_extension = 'jpg'
+
+class HumanPose(Dataset):
+    def __init__(self, batch_size=1):
+        super().__init__(
+            'human_pose',
+            Path('/vol/atlas/databases/body/SupportVectorBody/crop-highres'), batch_size=batch_size)
+        self.image_extension = 'jpg'
+        self.images_root = '.'
+
+    def get_keys(self):
+        path = self.root
+        def check_valid(x):
+            return all([(path / '{}+svs+{:02d}.pkl'.format(x, i)).exists() for i in [0, 1, 3, 5]])
+        
+        keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)]
+        self._keys = keys
+
+        print('Found {} files.'.format(len(keys)))
+
+        if len(keys) == 0:
+            raise RuntimeError('No images found in {}'.format(path))
+        return tf.constant(keys, tf.string)
+
+    def rescale_image(self, image, method=None):
+        return image
+
+    def get_pose(self, index, shape):
+        def wrapper(index):
+            index = index.decode("utf-8")
+            result = []
+
+            for i in [0, 1, 3, 5]:
+                svs = mio.import_pickle(self.root / '{}+svs+{:02d}.pkl'.format(index, i))
+                result.append(svs.pixels_with_channels_at_back())
+            return np.array(result).astype(np.float32)
+
+        svs, = tf.py_func(wrapper, [index], [tf.float32])
+        svs.set_shape([4, None, None, 7])
+        return svs, None
 
 
 class Deblurring(Dataset):
@@ -184,6 +234,7 @@ class FDDB(Dataset):
 
         return segmentation, tf.ones_like(segmentation)
     
+
 class AFLW(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(batch_size)
@@ -292,7 +343,7 @@ class AFLWSingle(Dataset):
             try:
                 lms = mio.import_landmark_file(p)
                 
-                if lms.n_landmarks == 68:
+                if lms.n_landmarks == 68 and not np.isnan(lms.lms.points).any():
                     keys.append(lms.path.stem)
             except:
                 pass
@@ -303,6 +354,27 @@ class AFLWSingle(Dataset):
         if len(keys) == 0:
             raise RuntimeError('No images found in {}'.format(path))
         return tf.constant(keys, tf.string)
+
+    def get_landmarks(self, index, shape=(256, 256)):
+        from utils_3d import crop_face
+        def wrapper(index):
+            path = self.root / (index.decode("utf-8") + self.image_extension)
+            im = mio.import_image(path, normalize=False)
+
+            im = crop_face(im)
+
+            pixels = get_pixels(im)
+            landmarks = im.landmarks[None].lms.points.astype(np.float32)
+
+            return pixels.astype(np.float32), landmarks
+
+        images, kpts = tf.py_func(wrapper, [index],
+                                   [tf.float32, tf.float32])
+
+        images.set_shape([shape[0], shape[1], 3])
+        kpts.set_shape([68, 2])
+
+        return images, kpts
 
     def get_keypoints(self, index, shape=(256, 256)):
         from utils_3d import crop_face
@@ -334,12 +406,16 @@ class AFLWSingle(Dataset):
 
         return images, kpts
 
-    def get(self):
+    def get(self, name):
         keys = self.get_keys(path='.')
         producer = tf.train.string_input_producer(keys,
                                                   shuffle=True, capacity=1000)
         key = producer.dequeue()
-        image, kpts = self.get_keypoints(key)
+        
+        if name == 'landmarks':
+            image, kpts = self.get_landmarks(key)
+        else:
+            image, kpts = self.get_keypoints(key)
         image = self.preprocess(image)
 
         return tf.train.batch([image, kpts],

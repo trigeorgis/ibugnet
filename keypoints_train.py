@@ -97,9 +97,10 @@ def train():
             restore_resnet(sess, FLAGS.pretrained_resnet_checkpoint_path)
 
         if FLAGS.pretrained_model_checkpoint_path:
-            variables_to_restore = slim.get_variables_to_restore()
-            saver = tf.train.Saver(variables_to_restore)
-            saver.restore(sess, FLAGS.pretrained_model_checkpoint_path)
+            print('Loading whole model...')
+            variables_to_restore = slim.get_model_variables()
+            init_fn = slim.assign_from_checkpoint_fn(
+                    FLAGS.pretrained_model_checkpoint_path, variables_to_restore)
 
         train_op = slim.learning.create_train_op(total_loss,
                                                  optimizer,
@@ -109,6 +110,7 @@ def train():
         slim.learning.train(train_op,
                             FLAGS.train_dir,
                             save_summaries_secs=60,
+                            init_fn=init_fn,
                             save_interval_secs=600)
 
 

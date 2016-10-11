@@ -61,9 +61,6 @@ def train():
     g = tf.Graph()
     with g.as_default():
         # Load datasets.
-        # provider = data_provider.ICT3DFE()
-        # images, normals = provider.get('normals')
-
         provider = data_provider.BaselNormals()
         images, normals, mask = provider.get('normals/mask')
 
@@ -76,7 +73,7 @@ def train():
 
         # Add a cosine loss to every scale and the combined output.
         for net, level_name in zip([prediction] + pyramid, ['pred'] + scales):
-            loss = losses.cosine_loss(net, normals, mask[:, :, :, 0])
+            loss = losses.cosine_loss(net, normals, mask)
             tf.scalar_summary('losses/loss at {}'.format(level_name), loss)
 
         total_loss = slim.losses.get_total_loss()

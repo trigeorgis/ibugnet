@@ -26,7 +26,10 @@ def main():
                             is_training=False):
             predictions, _ = resnet_model.multiscale_nrm_net(images, scales=(1, 2, 4))
 
-
+    tf.image_summary('images', images)
+    tf.image_summary('normals', normals)
+    tf.image_summary('predictions', predictions)
+    
     # Choose the metrics to compute:
     names_to_values, names_to_updates = slim.metrics.aggregate_metric_map({
         'cosine': tf.contrib.metrics.streaming_mean_cosine_distance(

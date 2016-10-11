@@ -66,9 +66,11 @@ def train():
         provider = data_provider.Photoface()
         albedo, normals, mask = provider.get('normals/mask', preprocess_inputs=False)
         albedo = albedo[..., 0]
-        light = tf.random_uniform((3,)) * tf.to_float((tf.shape(albedo)[1], tf.shape(albedo)[2], 0))
+        light = tf.nn.l2_normalize(tf.random_uniform((3,)), 0)
+
         images = reconstruct_image(albedo, normals, light)
-        images = tf.concat(3, [images[..., None]]*3)
+        images = tf.concat(3, [images[..., None], ] * 3)
+        images = tf.clip_by_value(images, 0, 255)
         preprocessed = provider.preprocess(images[0])[None, ...]
 
         # Define model graph.
@@ -78,9 +80,15 @@ def train():
                 scales = [1, 2, 4]
                 prediction, pyramid = resnet_model.multiscale_nrm_net(preprocessed, scales=scales)
 
+        reconstruction = tf.clip_by_value(reconstruct_image(albedo, prediction, light), 0, 255)
+        tf.histogram_summary('recon', reconstruction)
+        tf.histogram_summary('image', images)
+
         tf.image_summary('images', images)
         tf.image_summary('albedo', albedo[..., None])
-        tf.image_summary('reconstruction', reconstruct_image(albedo, prediction, light))
+        tf.image_summary('reconstruction', reconstruction[..., None] * mask)
+        tf.scalar_summary('recon loss', tf.reduce_mean(mask[..., 0] * tf.square(reconstruction - images[..., 0])))
+
         # Add a cosine loss to every scale and the combined output.
         for net, level_name in zip([prediction] + pyramid, ['pred'] + scales):
             loss = losses.cosine_loss(net, normals, mask)
@@ -94,22 +102,27 @@ def train():
     with tf.Session(graph=g) as sess:
 
         if FLAGS.pretrained_resnet_checkpoint_path:
+            print('Loading only the resnet model...')
             restore_resnet(sess, FLAGS.pretrained_resnet_checkpoint_path)
 
+
         if FLAGS.pretrained_model_checkpoint_path:
-            variables_to_restore = slim.get_variables_to_restore()
-            saver = tf.train.Saver(variables_to_restore)
-            saver.restore(sess, FLAGS.pretrained_model_checkpoint_path)
+            print('Loading whole model...')
+            variables_to_restore = slim.get_model_variables()
+            init_fn = slim.assign_from_checkpoint_fn(
+                    FLAGS.pretrained_model_checkpoint_path, variables_to_restore)
 
         train_op = slim.learning.create_train_op(total_loss,
                                                  optimizer,
-                                                 summarize_gradients=True)
+                                                 summarize_gradients=False)
 
         logging.set_verbosity(1)
         slim.learning.train(train_op,
                             FLAGS.train_dir,
-                            save_summaries_secs=60,
-                            save_interval_secs=600)
+                            init_fn=init_fn,
+                            number_of_steps=FLAGS.max_steps,
+                            save_summaries_secs=10,
+                            save_interval_secs=60)
 
 
 if __name__ == '__main__':

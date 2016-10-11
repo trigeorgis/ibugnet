@@ -56,7 +56,7 @@ def add_batchnorm_layers(i, net):
     return net
 
 
-def network(inputs, scale, output_classes=3):
+def network(inputs, scale, output_classes=3, return_endpoints=False, state=None):
     out_shape = tf.shape(inputs)[1:3]
 
     if scale > 1:
@@ -65,9 +65,9 @@ def network(inputs, scale, output_classes=3):
                                         padding='VALID')
 
     with slim.arg_scope(nets.resnet_v1.resnet_arg_scope()):
-        net, endpoints = nets.resnet_v1.resnet_v1_50(inputs, global_pool=False)
+        bottleneck, endpoints = nets.resnet_v1.resnet_v1_50(inputs, global_pool=False)
 
-    scope_name = '/'.join(net.name.split('/')[:3])
+    scope_name = '/'.join(bottleneck.name.split('/')[:3])
 
     skip_connections = [
         endpoints[scope_name + '/' + x] for x in [
@@ -75,7 +75,10 @@ def network(inputs, scale, output_classes=3):
         ]
     ]
 
-    net = slim.layers.conv2d(net, 1024, (3, 3), rate=12, scope='upsample_conv')
+    if state is not None:
+        skip_connections.append(state)
+
+    net = slim.layers.conv2d(bottleneck, 1024, (3, 3), rate=12, scope='upsample_conv')
 
     skip_connections.append(net)
     skip_connections = [add_batchnorm_layers(i, x) for i, x in enumerate(skip_connections)]
@@ -89,19 +92,34 @@ def network(inputs, scale, output_classes=3):
 
     net = tf.concat(3, skip_connections, name='concat-nrm__00')
 
-    return slim.conv2d(net,
-                       output_classes, (1, 1),
-                       scope='upscore-fuse-nrm__00',
-                       activation_fn=None)
+    result = slim.conv2d(net,
+            output_classes, (1, 1),
+            scope='upscore-fuse-nrm__00',
+            activation_fn=None)
+    
+    if return_endpoints:
+        return result, bottleneck
+    else:
+        return result
 
 
-def multiscale_kpts_net(inputs, scales=(1, 2, 4), num_keypoints=69):
+def multiscale_kpts_net(inputs, scales=(1, 2, 4), num_keypoints=69, return_endpoints=False):
     pyramid = []
+    endpoints = []
 
     for scale in scales:
         reuse_variables = scale != scales[0]
         with tf.variable_scope('multiscale', reuse=reuse_variables):
-            pyramid.append(network(inputs, scale, output_classes=num_keypoints))
+            net = network(
+                    inputs,
+                    scale,
+                    output_classes=num_keypoints,
+                    return_endpoints=return_endpoints)
+            if return_endpoints:
+                pyramid.append(net[0])
+                endpoints.append(net[1])
+            else:
+                pyramid.append(net)
 
     net = tf.concat(3, pyramid, name='concat-mr-kpts')
     net = slim.conv2d(net,
@@ -110,7 +128,25 @@ def multiscale_kpts_net(inputs, scales=(1, 2, 4), num_keypoints=69):
                       activation_fn=None)
 
 
-    return net, pyramid
+    return net, pyramid, endpoints
+
+
+def svs_regression_net(inputs):
+    states = []
+    batch_size = tf.shape(inputs)[0]
+    height = tf.shape(inputs)[1]
+    width = tf.shape(inputs)[2]
+    output_classes = 7
+    
+    hidden = tf.Variable(tf.zeros((1, 256, 256, output_classes)))
+    hidden = tf.image.resize_bilinear(hidden, (height, width, output_classes))
+
+    for i in range(4):
+        with tf.variable_scope('multiscale', reuse=i > 0):
+            hidden = network(inputs, 1, output_classes=output_classes, state=hidden)
+            states.append(hidden)
+
+    return hidden, states
 
 
 def multiscale_deblurring_net(inputs, scales=(1, 2, 4)):
