@@ -57,7 +57,14 @@ def cosine_loss(pred, ground_truth, weights=None, dim=3):
     return slim.losses.compute_weighted_loss(loss, weights)
 
 def normalized_rmse(pred, gt_truth, weights=1):
-    '''Computes the error normalised by the interocular distance.'''
+    '''Computes the error normalised by the interocular distance.
+    
+    Args:
+      pred: A `Tensor` of dimensions [num_images, 68, 2].
+      ground_truth: A `Tensor` of dimensions [num_images, 68, 2].
+    Returns:
+      A scalar with the normalized rmse error.
+    '''
     norm = tf.sqrt(tf.reduce_sum(((gt_truth[:, 36, :] - gt_truth[:, 45, :])**2), 1))
     loss = tf.reduce_sum(tf.sqrt(tf.reduce_sum(tf.square(pred - gt_truth), 2)), 1) / (norm * 68)
     return slim.losses.compute_weighted_loss(loss, weights)

@@ -171,7 +171,7 @@ class HumanPose(Dataset):
     def get_keys(self):
         path = self.root
         def check_valid(x):
-            return all([(path / '{}+svs+{:02d}.pkl'.format(x, i)).exists() for i in [0, 1, 3, 5]])
+            return all([(path / '{}+svs_dark+{:02d}.pkl'.format(x, i)).exists() for i in [0, 1, 2, 4]])
         
         keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)]
         self._keys = keys
@@ -190,9 +190,10 @@ class HumanPose(Dataset):
             index = index.decode("utf-8")
             result = []
 
-            for i in [0, 1, 3, 5]:
-                svs = mio.import_pickle(self.root / '{}+svs+{:02d}.pkl'.format(index, i))
-                result.append(svs.pixels_with_channels_at_back())
+            for i in  [0, 1, 2, 4]:
+                svs = mio.import_pickle(self.root / '{}+svs_dark+{:02d}.pkl'.format(index, i))
+                svs = svs.pixels_with_channels_at_back()
+                result.append(svs)
             return np.array(result).astype(np.float32)
 
         svs, = tf.py_func(wrapper, [index], [tf.float32])

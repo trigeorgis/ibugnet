@@ -13,6 +13,8 @@ from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import variables as tf_variables
 
+from menpo.shape import PointCloud
+
 slim = tf.contrib.slim
 
 
@@ -190,3 +192,62 @@ def create_train_op(
 
     # Ensure the train_tensor computes grad_updates.
     return control_flow_ops.with_dependencies([grad_updates], total_loss), train_step_fn
+
+
+jaw_indices = np.arange(0, 17)
+lbrow_indices = np.arange(17, 22)
+rbrow_indices = np.arange(22, 27)
+upper_nose_indices = np.arange(27, 31)
+lower_nose_indices = np.arange(31, 36)
+leye_indices = np.arange(36, 42)
+reye_indices = np.arange(42, 48)
+outer_mouth_indices = np.arange(48, 60)
+inner_mouth_indices = np.arange(60, 68)
+
+parts_68 = (jaw_indices, lbrow_indices, rbrow_indices, upper_nose_indices,
+            lower_nose_indices, leye_indices, reye_indices,
+            outer_mouth_indices, inner_mouth_indices)
+
+def line(image, x0, y0, x1, y1, color):
+    steep = False
+    if x0 < 0 or x0 >= 400 or x1 < 0 or x1 >= 400 or y0 < 0 or y0 >= 400 or y1 < 0 or y1 >= 400:
+        return
+
+    if abs(x0 - x1) < abs(y0 - y1):
+        x0, y0 = y0, x0
+        x1, y1 = y1, x1
+        steep = True
+
+    if x0 > x1:
+        x0, x1 = x1, x0
+        y0, y1 = y1, y0
+
+    for x in range(int(x0), int(x1) + 1):
+        t = (x - x0) / float(x1 - x0)
+        y = y0 * (1 - t) + y1 * t
+        if steep:
+            image[x, int(y)] = color
+        else:
+            image[int(y), x] = color
+
+
+def draw_landmarks(img, lms):
+    try:
+        img = img.copy()
+
+        for i, part in enumerate(parts_68[1:]):
+            circular = []
+
+            if i in (4, 5, 6, 7):
+                circular = [part[0]]
+
+            for p1, p2 in zip(part, list(part[1:]) + circular):
+                p1, p2 = lms[p1], lms[p2]
+
+                line(img, p2[1], p2[0], p1[1], p1[0], 1)
+    except:
+        pass
+    return img
+
+def batch_draw_landmarks(imgs, lms):
+    return np.array([draw_landmarks(img, l) for img, l in zip(imgs, lms)])

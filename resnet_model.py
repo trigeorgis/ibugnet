@@ -75,13 +75,13 @@ def network(inputs, scale, output_classes=3, return_endpoints=False, state=None)
         ]
     ]
 
-    if state is not None:
-        skip_connections.append(state)
 
     net = slim.layers.conv2d(bottleneck, 1024, (3, 3), rate=12, scope='upsample_conv')
 
     skip_connections.append(net)
     skip_connections = [add_batchnorm_layers(i, x) for i, x in enumerate(skip_connections)]
+    if state is not None:
+        skip_connections.append(state)
     skip_connections.append(inputs)
 
     skip_connections = [
@@ -131,6 +131,24 @@ def multiscale_kpts_net(inputs, scales=(1, 2, 4), num_keypoints=69, return_endpo
     return net, pyramid, endpoints
 
 
+def svs_regression_net_light(inputs):
+    states = []
+    batch_size = tf.shape(inputs)[0]
+    height = tf.shape(inputs)[1]
+    width = tf.shape(inputs)[2]
+    output_classes = 7
+    
+    hidden = tf.zeros((batch_size, height, width, output_classes), name='hidden')
+    
+    for i in range(4):
+        with tf.variable_scope('multiscale', reuse=i > 0):
+            hidden = network(inputs, 1, output_classes=output_classes, state=hidden * 10)
+            hidden = slim.conv2d(hidden, output_classes, (1, 1), activation_fn=tf.sigmoid)
+            states.append(hidden)
+
+    return hidden, states
+
+
 def svs_regression_net(inputs):
     states = []
     batch_size = tf.shape(inputs)[0]
@@ -138,12 +156,13 @@ def svs_regression_net(inputs):
     width = tf.shape(inputs)[2]
     output_classes = 7
     
-    hidden = tf.Variable(tf.zeros((1, 256, 256, output_classes)))
-    hidden = tf.image.resize_bilinear(hidden, (height, width, output_classes))
-
-    for i in range(4):
+    hidden = tf.zeros((batch_size, height, width, output_classes), name='hidden')
+    
+    for i in range(1):
         with tf.variable_scope('multiscale', reuse=i > 0):
-            hidden = network(inputs, 1, output_classes=output_classes, state=hidden)
+            hidden = (hidden - .5) * 256
+            hidden = network(tf.concat(3, (inputs, hidden)), 1, output_classes=output_classes)
+            hidden = slim.conv2d(hidden, output_classes, (1, 1), activation_fn=tf.sigmoid)
             states.append(hidden)
 
     return hidden, states
