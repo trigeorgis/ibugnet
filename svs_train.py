@@ -18,6 +18,7 @@ tf.app.flags.DEFINE_float('num_epochs_per_decay', 5.0,
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.97,
                           '''Learning rate decay factor.''')
 tf.app.flags.DEFINE_integer('batch_size', 32, '''The batch size to use.''')
+tf.app.flags.DEFINE_integer('num_iterations', 4, '''The number of iterations to unfold the pose machine.''')
 tf.app.flags.DEFINE_integer('num_preprocess_threads', 4,
                             '''How many preprocess threads to use.''')
 tf.app.flags.DEFINE_string('train_dir', 'ckpt/train_svs',
@@ -42,8 +43,9 @@ MOVING_AVERAGE_DECAY = 0.9999
 
 def restore_resnet(sess, path):
     def name_in_checkpoint(var):
-        if 'resnet_v1_50/conv1/weights' in var.name:
-            return None
+        # Uncomment for non lightweight model
+        # if 'resnet_v1_50/conv1/weights' in var.name:
+        #     return None
         name = '/'.join(var.name.split('/')[2:])
         name = name.split(':')[0]
         if 'Adam' in name:
@@ -76,7 +78,7 @@ def train():
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
                                 is_training=True):
 
-                prediction, states = resnet_model.svs_regression_net(images)
+                prediction, states = resnet_model.svs_regression_net_light(images, num_iterations=FLAGS.num_iterations)
                 
                 # States currently is
                 # (num_states, batch_size, height, width, num_parts)
@@ -90,7 +92,12 @@ def train():
             # Reweighting the loss by 100. If we do not do this 
             # The loss becomes extremely small.
             ones = tf.ones_like(gt)
+            
             weights = tf.select(gt < .1, ones, ones * 100)
+            
+            # The non-visible parts have a substracted value of a 100.
+            weights = tf.select(gt < 0, tf.zeros_like(gt), weights)
+
             loss = losses.smooth_l1(state, gt, weights)
             tf.scalar_summary('losses/iteration_{}'.format(i), loss)
 

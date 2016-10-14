@@ -20,7 +20,7 @@ tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.97,
 tf.app.flags.DEFINE_integer('batch_size', 32, '''The batch size to use.''')
 tf.app.flags.DEFINE_integer('num_preprocess_threads', 4,
                             '''How many preprocess threads to use.''')
-tf.app.flags.DEFINE_string('train_dir', 'ckpt/train',
+tf.app.flags.DEFINE_string('train_dir', 'ckpt/train_normals',
                            '''Directory where to write event logs '''
                            '''and checkpoint.''')
 tf.app.flags.DEFINE_string('pretrained_model_checkpoint_path', '',
@@ -57,13 +57,58 @@ def restore_resnet(sess, path):
     saver.restore(sess, path)
 
 
+class DatasetMixer():
+    
+    def __init__(self, names, densities=None, batch_size=1):
+        self.providers = []
+        self.batch_size = batch_size
+        
+        if densities is None:
+            densities = [1] * len(names)
+
+        for name, bs in zip(names, densities):
+            provider = getattr(data_provider, name)(batch_size=bs)
+            self.providers.append(provider)
+            
+    def get(self, *names):
+        queue = None
+
+        for p in self.providers:
+            ts = p.get(*names)
+            dtypes = [x.dtype for x in ts]
+            shapes = [x.get_shape() for x in ts]
+
+
+            if queue is None:
+                queue = tf.FIFOQueue(
+                    capacity=1000,
+                    dtypes=dtypes)
+
+            queue.enqueue_many(ts)
+            
+        ts = queue.dequeue()
+        for t, s in zip(ts, shapes):
+            t.set_shape(s[1:])
+
+        return tf.train.batch(
+            ts,
+            self.batch_size,
+            num_threads=4,
+            dynamic_pad=True,
+            capacity=200)
+
+
+    
 def train():
     g = tf.Graph()
     with g.as_default():
         # Load datasets.
-        provider = data_provider.BaselNormals()
+        # provider = data_provider.BaselNormals()
+        # images, normals, mask = provider.get('normals/mask')
+        
+        provider = DatasetMixer(('BaselNormals',))
         images, normals, mask = provider.get('normals/mask')
-
+        
         # Define model graph.
         with tf.variable_scope('net'):
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],

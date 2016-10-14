@@ -4,6 +4,8 @@ from __future__ import print_function
 
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
+import menpo.io as mio
 
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
@@ -16,6 +18,37 @@ from tensorflow.python.ops import variables as tf_variables
 from menpo.shape import PointCloud
 
 slim = tf.contrib.slim
+
+aflw_orthopdm = mio.import_pickle('aflw_orthopdm.pkl')
+
+keypoint_colours = np.array([plt.cm.spectral(x) for x in np.linspace(0, 1, 69)])[
+    ..., :3].astype(np.float32)
+
+def generate_heatmap(logits):
+    """Generates a coloured heatmap from the keypoint logits.
+
+    Args:
+        features: A `Tensor` of dimensions [num_batch, height, width, 69].
+    """
+    prediction = tf.nn.softmax(logits)
+    heatmap = tf.matmul(tf.reshape(prediction, (-1, 69)), keypoint_colours)
+    heatmap = tf.reshape(heatmap, (tf.shape(prediction)[0],
+                                   tf.shape(prediction)[1],
+                                   tf.shape(prediction)[2], 3))
+    return heatmap
+
+def project_landmarks_to_shape_model(landmarks):
+    final = []
+
+    for lms in landmarks:
+        lms = PointCloud(lms)
+        similarity = AlignmentSimilarity(pca.global_transform.source, lms)
+        projected_target = similarity.pseudoinverse().apply(lms)
+        target = pca.model.reconstruct(projected_target)
+        target = similarity.apply(target)
+        final.append(target.points)
+
+    return np.array(final).astype(np.float32)
 
 
 def caffe_preprocess(image):

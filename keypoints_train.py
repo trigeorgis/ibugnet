@@ -51,10 +51,11 @@ def restore_resnet(sess, path):
     variables_to_restore = slim.get_variables_to_restore(
         include=["net/multiscale/resnet_v1_50"])
     variables_to_restore = {name_in_checkpoint(var): var
-                            for var in variables_to_restore if name_in_checkpoint(var) is not None}
+                            for var in variables_to_restore
+                            if name_in_checkpoint(var) is not None}
 
-    saver = tf.train.Saver(variables_to_restore)
-    saver.restore(sess, path)
+    return slim.assign_from_checkpoint_fn(
+        path, variables_to_restore, ignore_missing_vars=True)
 
 
 def train():
@@ -67,19 +68,31 @@ def train():
         provider = data_provider.AFLW(batch_size=batch_size)
         images, keypoints, mask = provider.get('keypoints/mask')
         
+        keypoints = tf.to_int32(keypoints)
         is_background = tf.equal(keypoints, 0)
         ones = tf.to_float(tf.ones_like(is_background))
-        weights = tf.select(is_background, ones * 0.005, ones) * tf.to_float(mask)
+        zeros = tf.to_float(tf.zeros_like(is_background))
         keypoints = tf.reshape(keypoints, (-1,))
-        weights = tf.reshape(weights, (-1,))
-        weights.set_shape([None,])
         keypoints = slim.layers.one_hot_encoding(keypoints, num_classes=num_classes)
+        
+        weights = tf.select(is_background, ones * 0.1, ones) * tf.to_float(mask)
+
         
         # Define model graph.
         with tf.variable_scope('net'):
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
                                 is_training=True):
-                prediction, pyramid = resnet_model.multiscale_kpts_net(images, scales=(1, 2, 4))
+                prediction, pyramid, _ = resnet_model.multiscale_kpts_net(images, scales=(1, 2, 4))
+
+        background_is_very_confident = tf.nn.softmax(prediction)[..., :1] > .9
+        prediction_is_actually_background = tf.equal(background_is_very_confident, is_background)
+        
+        weights = tf.select(prediction_is_actually_background, zeros, weights)
+        weights = tf.reshape(weights, (-1,))
+        weights.set_shape([None,])
+        heatmaps = utils.generate_heatmap(prediction)
+        tf.image_summary('predictions', heatmaps)
+        tf.image_summary('images', images)
 
         # Add a cosine loss to every scale and the combined output.
         for net in [prediction] + pyramid:
@@ -93,8 +106,10 @@ def train():
 
     with tf.Session(graph=g) as sess:
 
+
         if FLAGS.pretrained_resnet_checkpoint_path:
-            restore_resnet(sess, FLAGS.pretrained_resnet_checkpoint_path)
+            init_fn = restore_resnet(sess,
+                                     FLAGS.pretrained_resnet_checkpoint_path)
 
         if FLAGS.pretrained_model_checkpoint_path:
             print('Loading whole model...')

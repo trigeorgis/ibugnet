@@ -8,6 +8,7 @@ from scipy.io import loadmat
 from utils_3d import crop_face
 from menpo.image import Image
 
+
 def caffe_preprocess(image):
     VGG_MEAN = np.array([102.9801, 115.9465, 122.7717])
     # RGB -> BGR
@@ -31,12 +32,12 @@ def _rescale_image(image, stride_width=64, method=0):
     new_width = stride_width * tf.round((width * scale_up) / stride_width) + 1
     new_height = tf.to_int32(new_height)
     new_width = tf.to_int32(new_width)
-    image = tf.image.resize_images(image, (new_height, new_width), method=method)
+    image = tf.image.resize_images(
+        image, (new_height, new_width), method=method)
     return image
 
 
 class Dataset(object):
-    
     def __init__(self, name, root, batch_size=1):
         self.name = name
         self.root = Path(root)
@@ -65,12 +66,21 @@ class Dataset(object):
         return caffe_preprocess(image)
 
     def get_images(self, index, shape=None):
-        return self._get_images(index, shape=None, subdir=self.images_root, extension=self.image_extension)
+        return self._get_images(
+            index,
+            shape=None,
+            subdir=self.images_root,
+            extension=self.image_extension)
 
-    def _get_images(self, index, shape=None, subdir='images', channels=3, extension='png'):
-        path = tf.reduce_join([str(self.root / subdir), '/', index, '.', extension],
-                              0)
-        
+    def _get_images(self,
+                    index,
+                    shape=None,
+                    subdir='images',
+                    channels=3,
+                    extension='png'):
+        path = tf.reduce_join(
+            [str(self.root / subdir), '/', index, '.', extension], 0)
+
         if extension == 'png':
             image = tf.image.decode_png(tf.read_file(path), channels=channels)
         elif extension == 'jpg':
@@ -82,7 +92,8 @@ class Dataset(object):
 
     def get_normals(self, index, shape=None):
         def wrapper(index, shape):
-            path = self.root / 'normals' / "{}.mat".format(index.decode("utf-8"))
+            path = self.root / 'normals' / "{}.mat".format(
+                index.decode("utf-8"))
 
             if path.exists():
                 mat = loadmat(str(path))
@@ -104,17 +115,17 @@ class Dataset(object):
         res = tf.zeros(shape)
         return res, res
 
-    def get(self, *names, preprocess_inputs=True):
-        producer = tf.train.string_input_producer(self.get_keys(),
-                                                  shuffle=True)
+    def get(self, *names, preprocess_inputs=True, create_batches=True):
+        producer = tf.train.string_input_producer(
+            self.get_keys(), shuffle=True)
         key = producer.dequeue()
         images = self.get_images(key)
         image_shape = tf.shape(images)
         images = self.rescale_image(images)
-        
+
         if preprocess_inputs:
             images = self.preprocess(images)
-        
+
         tensors = [images]
 
         for name in names:
@@ -128,24 +139,28 @@ class Dataset(object):
             if use_mask:
                 tensors.append(self.rescale_image(mask, method=1))
 
-        return tf.train.batch(tensors,
-                              self.batch_size,
-                              capacity=100,
-                              dynamic_pad=True)
+        if not create_batches:
+            return tensors
+
+        return tf.train.batch(
+            tensors, self.batch_size, capacity=100, dynamic_pad=True)
+
 
 class ICT3DFE(Dataset):
     def __init__(self, batch_size=1):
-        super().__init__(name='ICT3DFE', root=Path('data/ict3drfe/'), batch_size=batch_size)
+        super().__init__(
+            name='ICT3DFE', root=Path('data/ict3drfe/'), batch_size=batch_size)
         self.image_extension = 'png'
-    
+
     def get_normals(self, index, shape=None):
         normals, mask = super().get_normals(index, shape)
         return normals * np.array([1, 1, 1]), mask
 
-    
+
 class Photoface(Dataset):
     def __init__(self, batch_size=1):
-        super().__init__('photoface', Path('data/photoface/'), batch_size=batch_size)
+        super().__init__(
+            'photoface', Path('data/photoface/'), batch_size=batch_size)
         self.image_extension = 'png'
         self.images_root = 'albedo'
 
@@ -153,26 +168,41 @@ class Photoface(Dataset):
         normals, mask = super().get_normals(index, shape)
         return normals * np.array([1, -1, 1]), mask
 
+
 class BaselNormals(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(
             '3ddfa_basel',
-            Path('/data/datasets/3ddfa_basel_normals'), batch_size=batch_size)
+            Path('/data/datasets/3ddfa_basel_normals'),
+            batch_size=batch_size)
         self.image_extension = 'jpg'
+
+
+class MeinNormals(Dataset):
+    def __init__(self, batch_size=1):
+        super().__init__(
+            'mein3dnormals',
+            Path('/data/datasets/renders/emotion_model_normals'),
+            batch_size=batch_size)
+        self.image_extension = 'jpg'
+
 
 class HumanPose(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(
             'human_pose',
-            Path('/vol/atlas/databases/body/SupportVectorBody/crop-highres'), batch_size=batch_size)
+            Path('/vol/atlas/databases/body/SupportVectorBody/crop-highres'),
+            batch_size=batch_size)
         self.image_extension = 'jpg'
         self.images_root = '.'
 
     def get_keys(self):
         path = self.root
+
         def check_valid(x):
-            return all([(path / '{}+svs_dark+{:02d}.pkl'.format(x, i)).exists() for i in [0, 1, 2, 4]])
-        
+            return all([(path / '{}+svs_dark+{:02d}.pkl'.format(x, i)).exists()
+                        for i in [0, 1, 2, 4]])
+
         keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)]
         self._keys = keys
 
@@ -190,8 +220,9 @@ class HumanPose(Dataset):
             index = index.decode("utf-8")
             result = []
 
-            for i in  [0, 1, 2, 4]:
-                svs = mio.import_pickle(self.root / '{}+svs_dark+{:02d}.pkl'.format(index, i))
+            for i in [0, 1, 2, 4]:
+                svs = mio.import_pickle(
+                    self.root / '{}+svs_dark+{:02d}.pkl'.format(index, i))
                 svs = svs.pixels_with_channels_at_back()
                 result.append(svs)
             return np.array(result).astype(np.float32)
@@ -216,7 +247,8 @@ class Deblurring(Dataset):
         return images
 
     def get_deblurred(self, index, shape=None):
-        deblurred = self._get_images(index, shape, subdir='images', extension='jpg')
+        deblurred = self._get_images(
+            index, shape, subdir='images', extension='jpg')
         deblurred = tf.to_float(deblurred) / 255.
         return deblurred, tf.ones_like(deblurred)
 
@@ -228,19 +260,21 @@ class FDDB(Dataset):
 
     def get_images(self, index, shape=None, subdir='images'):
         return self._get_images(index, shape, subdir=subdir, extension='jpg')
-    
+
     def get_segmentation(self, index, shape=None):
         segmentation = self._get_images(
-            index, shape, subdir='semantic_segmentation', channels=1, extension='png')
+            index,
+            shape,
+            subdir='semantic_segmentation',
+            channels=1,
+            extension='png')
 
         return segmentation, tf.ones_like(segmentation)
-    
+
 
 class AFLW(Dataset):
     def __init__(self, batch_size=1):
-        super().__init__(batch_size)
-        self.name = 'AFLW'
-        self.root = Path('data/aflw/')
+        super().__init__('AFLW', Path('data/aflw/'), batch_size)
         self.lms_root = self.root / 'landmarks'
         self.lms_extension = 'ljson'
         self.image_extension = 'jpg'
@@ -254,7 +288,7 @@ class AFLW(Dataset):
             landmark_indices = list(map(int, index.split('_')[1:]))
             if len(landmark_indices) > 1:
                 min_index, max_index = landmark_indices
-                landmark_indices = range(min_index, max_index+1)
+                landmark_indices = range(min_index, max_index + 1)
 
             kpts = np.zeros(shape[:2], dtype=int)
             im = Image(kpts)
@@ -262,16 +296,18 @@ class AFLW(Dataset):
             mask = np.ones(list(shape[:2]) + [1]).astype(np.float32)
 
             for lms_index in landmark_indices:
-                filename = (prefix + '_' + str(lms_index) + '.' + self.lms_extension)
+                filename = (
+                    prefix + '_' + str(lms_index) + '.' + self.lms_extension)
                 path = self.lms_root / filename
                 if not path.exists():
                     continue
                 lms = mio.import_landmark_file(path.as_posix()).lms
-                
+
                 if lms.points.shape[0] != 68:
                     min_indices, max_indices = lms.bounds()
 
-                    mask[min_indices[0]:max_indices[0], min_indices[1]:max_indices[1]] = 0
+                    mask[min_indices[0]:max_indices[0], min_indices[1]:
+                         max_indices[1]] = 0
                     continue
 
                 for i in range(68):
@@ -280,15 +316,13 @@ class AFLW(Dataset):
 
                     pc = lms.points[i][None, :]
                     lms_mask.mask.pixels[...] = False
-                    lms_mask = lms_mask.mask.set_patches(patches, menpo.shape.PointCloud(pc))
+                    lms_mask = lms_mask.mask.set_patches(
+                        patches, menpo.shape.PointCloud(pc))
                     kpts[lms_mask.mask] = i + 1
-
 
             return kpts.astype(np.int32), mask.astype(np.int32)
 
-
-        kpts, mask = tf.py_func(wrapper, [index, shape],
-                                   [tf.int32, tf.int32])
+        kpts, mask = tf.py_func(wrapper, [index, shape], [tf.int32, tf.int32])
 
         kpts = tf.expand_dims(tf.reshape(kpts, shape[:2]), 2)
         mask = tf.expand_dims(tf.reshape(mask, shape[:2]), 2)
@@ -297,10 +331,14 @@ class AFLW(Dataset):
 
     def get_segmentation(self, index, shape=None):
         segmentation = self._get_images(
-            index, shape, subdir='semantic_segmentation', channels=1, extension='png')
+            index,
+            shape,
+            subdir='semantic_segmentation',
+            channels=1,
+            extension='png')
 
         return segmentation, tf.ones_like(segmentation)
-    
+
 
 def get_pixels(im, channels=3):
     """Returns the pixels off an `Image`.
@@ -310,7 +348,7 @@ def get_pixels(im, channels=3):
     Returns:
       A `np.array` of dimensions [height, width, channels]
     """
-    
+
     assert channels in [3]
 
     pixels = im.pixels_with_channels_at_back()
@@ -318,33 +356,36 @@ def get_pixels(im, channels=3):
     if len(pixels.shape) == 2:
         pixels = pixels[..., None]
 
-    # If the image is grayscale, make it RGB.
+        # If the image is grayscale, make it RGB.
         pixels = np.dstack([pixels, pixels, pixels])
 
     # If we have an RGBA image return only the RGB channels.
     if pixels.shape[2] == 4:
         pixels = pixels[..., :3]
-    
+
     return pixels
+
 
 class AFLWSingle(Dataset):
     def __init__(self, batch_size=1):
-        super().__init__('AFLW', Path('/vol/atlas/databases/aflw_ibug'), batch_size)
+        super().__init__('AFLW', Path('/vol/atlas/databases/aflw_ibug'),
+                         batch_size)
         self.image_extension = '.jpg'
         self.lms_extension = '.ljson'
 
     def get_keys(self, path='images'):
-        
+
         path = self.root / path
         lms_files = path.glob('*' + self.lms_extension)
-        keys = [] # ['face_55135', 'face_49348']
-        
+        keys = []  # ['face_55135', 'face_49348']
+
         # Get only files with 68 landmarks
         for p in lms_files:
             try:
                 lms = mio.import_landmark_file(p)
-                
-                if lms.n_landmarks == 68 and not np.isnan(lms.lms.points).any():
+
+                if lms.n_landmarks == 68 and not np.isnan(lms.lms.points).any(
+                ):
                     keys.append(lms.path.stem)
             except:
                 pass
@@ -358,6 +399,7 @@ class AFLWSingle(Dataset):
 
     def get_landmarks(self, index, shape=(256, 256)):
         from utils_3d import crop_face
+
         def wrapper(index):
             path = self.root / (index.decode("utf-8") + self.image_extension)
             im = mio.import_image(path, normalize=False)
@@ -369,8 +411,7 @@ class AFLWSingle(Dataset):
 
             return pixels.astype(np.float32), landmarks
 
-        images, kpts = tf.py_func(wrapper, [index],
-                                   [tf.float32, tf.float32])
+        images, kpts = tf.py_func(wrapper, [index], [tf.float32, tf.float32])
 
         images.set_shape([shape[0], shape[1], 3])
         kpts.set_shape([68, 2])
@@ -379,52 +420,54 @@ class AFLWSingle(Dataset):
 
     def get_keypoints(self, index, shape=(256, 256)):
         from utils_3d import crop_face
+
         def wrapper(index):
             path = self.root / (index.decode("utf-8") + self.image_extension)
             im = mio.import_image(path, normalize=False)
 
             im = crop_face(im)
             kpts = np.zeros(im.shape, dtype=int)
-
+            
+            
             for i in range(68):
                 mask = im.as_masked().copy()
-                patches = np.ones((1, 1, 1, 5, 5), dtype=np.bool)
+                patches = np.ones((1, 1, 1, 4, 4), dtype=np.bool)
 
                 pc = mask.landmarks[None].lms.points[i][None, :]
                 mask.mask.pixels[...] = False
-                mask = mask.mask.set_patches(patches, menpo.shape.PointCloud(pc))
+                mask = mask.mask.set_patches(patches,
+                                             menpo.shape.PointCloud(pc))
                 kpts[mask.mask] = i + 1
 
             pixels = get_pixels(im)
 
             return pixels.astype(np.float32), kpts.astype(np.int32)
 
-        images, kpts = tf.py_func(wrapper, [index],
-                                   [tf.float32, tf.int32])
+        images, kpts = tf.py_func(wrapper, [index], [tf.float32, tf.int32])
 
         images.set_shape([shape[0], shape[1], 3])
         kpts.set_shape([shape[0], shape[1]])
+        mask = tf.ones_like(kpts)
 
-        return images, kpts
+        return images, kpts, mask
 
     def get(self, name):
         keys = self.get_keys(path='.')
-        producer = tf.train.string_input_producer(keys,
-                                                  shuffle=True, capacity=1000)
+        producer = tf.train.string_input_producer(
+            keys, shuffle=True, capacity=1000)
         key = producer.dequeue()
-        
+
         if name == 'landmarks':
+            mask = tf.ones((self.batch_size, 68, 2))
             image, kpts = self.get_landmarks(key)
         else:
-            image, kpts = self.get_keypoints(key)
+            image, kpts, mask = self.get_keypoints(key)
         image = self.preprocess(image)
 
-        return tf.train.batch([image, kpts],
-                              self.batch_size,
-                              capacity=1000,
-                              dynamic_pad=False)
+        return tf.train.batch(
+            [image, kpts, mask], self.batch_size, capacity=1000, dynamic_pad=False)
 
-    
+
 class FDDBSingle(AFLWSingle):
     def __init__(self, batch_size=1):
         super().__init__(batch_size)
@@ -433,13 +476,17 @@ class FDDBSingle(AFLWSingle):
 
         self.name = 'FDDB'
         self.root = Path('/vol/atlas/databases/fddb_ibug')
-        template = m3dio.import_mesh('/vol/construct3dmm/regression/src/template.obj')
+        template = m3dio.import_mesh(
+            '/vol/construct3dmm/regression/src/template.obj')
         template = Translation(-template.centre()).apply(template)
-        self.template = scale_about_centre(template, 1./1000.).apply(template)
+        self.template = scale_about_centre(template, 1. /
+                                           1000.).apply(template)
         pca_path = '/homes/gt108/Projects/ibugface/pose_settings/pca_params.pkl'
-        self.eigenvectors, self.eigenvalues, self.h_mean, self.h_max = mio.import_pickle(pca_path)
+        self.eigenvectors, self.eigenvalues, self.h_mean, self.h_max = mio.import_pickle(
+            pca_path)
         self.image_extension = '.jpg'
         self.lms_extension = '.ljson'
+
 
 class LFPWSingle(AFLWSingle):
     def __init__(self, batch_size=1):
@@ -451,11 +498,14 @@ class LFPWSingle(AFLWSingle):
         self.name = 'LFPW'
         self.batch_size = batch_size
         self.root = Path('/vol/atlas/databases/lfpw/trainset')
-        template = m3dio.import_mesh('/vol/construct3dmm/regression/src/template.obj')
+        template = m3dio.import_mesh(
+            '/vol/construct3dmm/regression/src/template.obj')
         template = Translation(-template.centre()).apply(template)
-        self.template = scale_about_centre(template, 1./1000.).apply(template)
+        self.template = scale_about_centre(template, 1. /
+                                           1000.).apply(template)
         self.image_extension = '.png'
         self.lms_extension = '.pts'
+
 
 class Deep3DV1(Dataset):
     def __init__(self, batch_size=32):
@@ -463,12 +513,16 @@ class Deep3DV1(Dataset):
         self.batch_size = batch_size
         self.root = Path('/data/datasets/renders/v1')
         self.tfrecord_names = ['train_v2.tfrecords']
-        self.model = mio.import_pickle('/vol/construct3dmm/experiments/models/nicp/mein3d/full_unmasked_good_200.pkl')['model']
-        self.settings = mio.import_pickle('/vol/construct3dmm/experiments/nicptexture/settings.pkl', encoding='latin1')
+        self.model = mio.import_pickle(
+            '/vol/construct3dmm/experiments/models/nicp/mein3d/full_unmasked_good_200.pkl')[
+                'model']
+        self.settings = mio.import_pickle(
+            '/vol/construct3dmm/experiments/nicptexture/settings.pkl',
+            encoding='latin1')
 
     def get(self):
         paths = [str(self.root / x) for x in self.tfrecord_names]
-        
+
         filename_queue = tf.train.string_input_producer(paths)
         reader = tf.TFRecordReader()
         _, serialized_example = reader.read(filename_queue)
@@ -495,23 +549,24 @@ class Deep3DV1(Dataset):
         transform = tf.decode_raw(features['transform'], tf.float32)
         parameters.set_shape((200))
 
-#         parameters = tf.expand_dims(parameters, 0)
+        #         parameters = tf.expand_dims(parameters, 0)
 
-#         n_vertices = self.model._mean.shape[0] // 3
-#         h = tf.matmul(parameters, self.model.components.astype(np.float32)) +self. model._mean.astype(np.float32)
-#         h = tf.reshape(h, (n_vertices, 3))
-#         h = tf.concat(1, [h, tf.ones((n_vertices, 1))])
-#         h = tf.matmul(h, tf.reshape(transform, (4, 4)), transpose_b=True)
-#         h = (h / tf.expand_dims(h[:, 3], 1))[:, :3]
+        #         n_vertices = self.model._mean.shape[0] // 3
+        #         h = tf.matmul(parameters, self.model.components.astype(np.float32)) +self. model._mean.astype(np.float32)
+        #         h = tf.reshape(h, (n_vertices, 3))
+        #         h = tf.concat(1, [h, tf.ones((n_vertices, 1))])
+        #         h = tf.matmul(h, tf.reshape(transform, (4, 4)), transpose_b=True)
+        #         h = (h / tf.expand_dims(h[:, 3], 1))[:, :3]
 
         parameters /= 10000.
-        return tf.train.shuffle_batch([image, uv, parameters ],
-                              self.batch_size,
-                              capacity=1000,
-                              num_threads=3,
-                              min_after_dequeue=200)
-        
-    
+        return tf.train.shuffle_batch(
+            [image, uv, parameters],
+            self.batch_size,
+            capacity=1000,
+            num_threads=3,
+            min_after_dequeue=200)
+
+
 class JamesRenders(Dataset):
     def __init__(self, batch_size=32):
         self.name = 'JamesRenders'
@@ -531,7 +586,7 @@ class JamesRenders(Dataset):
             return px.astype(np.float32), p['weights'].astype(np.float32)
 
         images, parameters = tf.py_func(wrapper, [index],
-                                   [tf.float32, tf.float32])
+                                        [tf.float32, tf.float32])
 
         images.set_shape([shape[0], shape[1], 3])
         parameters.set_shape([200])
@@ -540,14 +595,14 @@ class JamesRenders(Dataset):
 
     def get(self):
         keys = self.get_keys(path='.')
-        producer = tf.train.string_input_producer(keys,
-                                                  shuffle=True)
+        producer = tf.train.string_input_producer(keys, shuffle=True)
         key = producer.dequeue()
         images, parameters = self.get_data(key)
         images = self.preprocess(images)
         parameters = self.preprocess_params(parameters)
 
-        return tf.train.batch([images, parameters],
-                              self.batch_size,
-                              capacity=80,
-                              dynamic_pad=False)
+        return tf.train.batch(
+            [images, parameters],
+            self.batch_size,
+            capacity=80,
+            dynamic_pad=False)
