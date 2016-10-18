@@ -191,7 +191,7 @@ class HumanPose(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(
             'human_pose',
-            Path('/vol/atlas/databases/body/SupportVectorBody/crop-highres'),
+            Path('/vol/atlas/databases/body/SupportVectorBody/crop-general'),
             batch_size=batch_size)
         self.image_extension = 'jpg'
         self.images_root = '.'
@@ -223,12 +223,12 @@ class HumanPose(Dataset):
             for i in [0, 1, 2, 4]:
                 svs = mio.import_pickle(
                     self.root / '{}+svs_dark+{:02d}.pkl'.format(index, i))
-                svs = svs.pixels_with_channels_at_back()
+                svs = svs.pixels_with_channels_at_back()[:,:,[0,1,2,3,8]]
                 result.append(svs)
             return np.array(result).astype(np.float32)
 
         svs, = tf.py_func(wrapper, [index], [tf.float32])
-        svs.set_shape([4, None, None, 7])
+        svs.set_shape([4, None, None, 5])
         return svs, None
 
 
@@ -342,7 +342,7 @@ class AFLW(Dataset):
 
 def get_pixels(im, channels=3):
     """Returns the pixels off an `Image`.
-    
+
     Args:
       im: A menpo `Image`.
     Returns:
@@ -427,8 +427,8 @@ class AFLWSingle(Dataset):
 
             im = crop_face(im)
             kpts = np.zeros(im.shape, dtype=int)
-            
-            
+
+
             for i in range(68):
                 mask = im.as_masked().copy()
                 patches = np.ones((1, 1, 1, 4, 4), dtype=np.bool)

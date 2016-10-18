@@ -19,7 +19,7 @@ from menpo.shape import PointCloud
 
 slim = tf.contrib.slim
 
-aflw_orthopdm = mio.import_pickle('aflw_orthopdm.pkl')
+# aflw_orthopdm = mio.import_pickle('aflw_orthopdm.pkl')
 
 keypoint_colours = np.array([plt.cm.spectral(x) for x in np.linspace(0, 1, 69)])[
     ..., :3].astype(np.float32)
