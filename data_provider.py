@@ -191,12 +191,16 @@ class HumanPose(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(
             'human_pose',
-            Path('/vol/atlas/databases/body/SupportVectorBody/crop-general'),
+            Path('/data/yz4009/'),
             batch_size=batch_size)
         self.image_extension = 'jpg'
         self.images_root = '.'
 
     def get_keys(self):
+        if (self.root / 'keys.pkl').exists():
+            keys = mio.import_pickle(self.root / 'keys.pkl')
+            return tf.constant(keys)
+
         path = self.root
 
         def check_valid(x):
@@ -206,6 +210,7 @@ class HumanPose(Dataset):
         keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)]
         self._keys = keys
 
+        mio.export_pickle(keys, self.root / 'keys.pkl')
         print('Found {} files.'.format(len(keys)))
 
         if len(keys) == 0:
@@ -229,7 +234,18 @@ class HumanPose(Dataset):
 
         svs, = tf.py_func(wrapper, [index], [tf.float32])
         svs.set_shape([4, None, None, 5])
-        return svs, None
+        return svs, tf.ones_like(svs)
+
+    def get_heatmap(self, index, shape):
+        def wrapper(index):
+            index = index.decode("utf-8")
+            hm = mio.import_pickle(
+                self.root / '{}+hm.pkl'.format(index))
+            return hm.pixels_with_channels_at_back().astype(np.float32)
+
+        hm, = tf.py_func(wrapper, [index], [tf.float32])
+        hm.set_shape([None, None, 13])
+        return hm, tf.ones_like(hm)
 
 
 class Deblurring(Dataset):

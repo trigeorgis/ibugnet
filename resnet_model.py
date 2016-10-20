@@ -64,7 +64,7 @@ def network(inputs,
             return_endpoints=False,
             state=None):
     """Defines a lightweight resnet based model for dense estimation tasks.
-    
+
     Args:
       inputs: A `Tensor` with dimensions [num_batches, height, width, depth].
       scale: A scalar which denotes the factor to subsample the current image.
@@ -208,6 +208,18 @@ def svs_regression_net(inputs, output_classes=7):
             states.append(hidden)
 
     return hidden, states
+
+
+def svs_landmark_regression_net(inputs, output_classes=13):
+    with tf.variable_scope('landmarks'):
+        with slim.arg_scope(nets.resnet_utils.resnet_arg_scope()):
+            net, layers = nets.resnet_v1.resnet_v1_50(inputs, output_classes)
+
+        out_shape = tf.shape(inputs)[1:3]
+
+        net = tf.image.resize_bilinear(net, out_shape, name="up_nrm")
+
+    return net, layers
 
 
 def multiscale_deblurring_net(inputs, scales=(1, 2, 4)):
