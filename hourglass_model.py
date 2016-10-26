@@ -40,34 +40,6 @@ def hourglass_arg_scope(weight_decay=0.0001,
                 return arg_sc
 
 
-def test_network(inputs,
-            scale,
-            output_channels=14):
-    """Defines a lightweight resnet based model for dense estimation tasks.
-
-    Args:
-      inputs: A `Tensor` with dimensions [num_batches, height, width, depth].
-      scale: A scalar which denotes the factor to subsample the current image.
-      output_channels: The number of output channels. E.g., for human pose
-        estimation this equals 13 channels.
-    Returns:
-      A `Tensor` of dimensions [num_batches, height, width, output_channels]."""
-
-    out_shape = tf.shape(inputs)[1:3]
-
-    if scale > 1:
-        inputs = tf.pad(inputs, ((0, 0), (1, 1), (1, 1), (0, 0)))
-        inputs = slim.layers.avg_pool2d(
-            inputs, (3, 3), (scale, scale), padding='VALID')
-
-    with slim.arg_scope(hourglass_arg_scope()):
-        with slim.arg_scope(nets.resnet_v1.resnet_arg_scope()):
-            net, layers = nets.resnet_v1.resnet_v1_50(inputs)
-            net = slim.conv2d(net, output_channels, 1, 1, scope='output_channel')
-            net = tf.image.resize_bilinear(net, out_shape, name="up_sample")
-            return net
-
-
 def network(inputs,
             scale,
             output_channels=14):
