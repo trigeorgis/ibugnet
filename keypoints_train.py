@@ -68,25 +68,26 @@ def train():
         provider = data_provider.AFLW(batch_size=batch_size)
         images, keypoints, mask = provider.get('keypoints/mask')
         
+        keypoints_transformed = dpm(keypoints)
+        
         keypoints = tf.to_int32(keypoints)
         is_background = tf.equal(keypoints, 0)
         ones = tf.to_float(tf.ones_like(is_background))
         zeros = tf.to_float(tf.zeros_like(is_background))
         keypoints = tf.reshape(keypoints, (-1,))
         keypoints = slim.layers.one_hot_encoding(keypoints, num_classes=num_classes)
-        
-        weights = tf.select(is_background, ones * 0.1, ones) * tf.to_float(mask)
 
-        
+        weights = tf.select(is_background, ones, ones) * tf.to_float(mask)
+
         # Define model graph.
         with tf.variable_scope('net'):
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
                                 is_training=True):
                 prediction, pyramid, _ = resnet_model.multiscale_kpts_net(images, scales=(1, 2, 4))
 
-        background_is_very_confident = tf.nn.softmax(prediction)[..., :1] > .9
+        background_is_very_confident = tf.nn.softmax(prediction)[..., 0] > .99
         prediction_is_actually_background = tf.equal(background_is_very_confident, is_background)
-        
+
         weights = tf.select(prediction_is_actually_background, zeros, weights)
         weights = tf.reshape(weights, (-1,))
         weights.set_shape([None,])
@@ -97,7 +98,9 @@ def train():
         # Add a cosine loss to every scale and the combined output.
         for net in [prediction] + pyramid:
             net = tf.reshape(net, (-1, num_classes))
-            slim.losses.softmax_cross_entropy(net, keypoints, weight=weights)
+            # slim.losses.softmax_cross_entropy(net, keypoints, weight=weights )
+            
+            slim.losses.mean_squared_error(net, keypoints_transformed - dpm)
 
         total_loss = slim.losses.get_total_loss()
         tf.scalar_summary('losses/total loss', total_loss)

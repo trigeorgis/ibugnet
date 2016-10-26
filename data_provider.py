@@ -143,7 +143,7 @@ class Dataset(object):
             return tensors
 
         return tf.train.batch(
-            tensors, self.batch_size, capacity=100, dynamic_pad=True)
+            tensors, self.batch_size, capacity=500, dynamic_pad=True)
 
 
 class ICT3DFE(Dataset):
@@ -154,7 +154,7 @@ class ICT3DFE(Dataset):
 
     def get_normals(self, index, shape=None):
         normals, mask = super().get_normals(index, shape)
-        return normals * np.array([1, 1, 1]), mask
+        return normals * np.array([-1, -1, 1]), mask
 
 
 class Photoface(Dataset):
@@ -173,7 +173,7 @@ class BaselNormals(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(
             '3ddfa_basel',
-            Path('/data/datasets/3ddfa_basel_normals'),
+            Path('data/3ddfa_basel_normals'),
             batch_size=batch_size)
         self.image_extension = 'jpg'
 
@@ -182,7 +182,7 @@ class MeinNormals(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(
             'mein3dnormals',
-            Path('/data/datasets/renders/emotion_model_normals'),
+            Path('/vol/construct3dmm/deep3d/emotion_model_renders'),
             batch_size=batch_size)
         self.image_extension = 'jpg'
 
@@ -191,7 +191,7 @@ class HumanPose(Dataset):
     def __init__(self, batch_size=1):
         super().__init__(
             'human_pose',
-            Path('/vol/atlas/databases/body/SupportVectorBody/crop-highres'),
+            Path('/vol/atlas/databases/body/SupportVectorBody/crop-general'),
             batch_size=batch_size)
         self.image_extension = 'jpg'
         self.images_root = '.'
@@ -199,11 +199,17 @@ class HumanPose(Dataset):
     def get_keys(self):
         path = self.root
 
+        lms = mio.import_landmark_files(self.root)
+        ignore_list = [l.path.stem for l in lms if l.lms.n_points!=13]
+
         def check_valid(x):
+            if x in ignore_list:
+                return False
+
             return all([(path / '{}+svs_dark+{:02d}.pkl'.format(x, i)).exists()
                         for i in [0, 1, 2, 4]])
 
-        keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)]
+        keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)][:18000]
         self._keys = keys
 
         print('Found {} files.'.format(len(keys)))
@@ -213,6 +219,7 @@ class HumanPose(Dataset):
         return tf.constant(keys, tf.string)
 
     def rescale_image(self, image, method=None):
+        # The dataset comes prescaled.
         return image
 
     def get_pose(self, index, shape):
@@ -230,6 +237,85 @@ class HumanPose(Dataset):
         svs, = tf.py_func(wrapper, [index], [tf.float32])
         svs.set_shape([4, None, None, 7])
         return svs, None
+
+    def get_heatmap(self, index, shape):
+        def wrapper(index):
+            index = index.decode("utf-8")
+
+            heatmap = mio.import_pickle(
+                self.root / '{}+hm.pkl'.format(index))
+
+            heatmap = heatmap.pixels_with_channels_at_back()
+            return heatmap.astype(np.float32)
+
+        svs, = tf.py_func(wrapper, [index], [tf.float32])
+        svs.set_shape([None, None, 13])
+        return svs, tf.ones(tf.shape(svs))
+
+    def get_classes(self, index, shape, n_keypoints=13):
+        def wrapper(index):
+            path = self.root / (index.decode("utf-8") + '.' + self.image_extension)
+            im = mio.import_image(path, normalize=False)
+            lms = im.landmarks[None].lms
+
+            kpts = np.zeros(list(im.shape), dtype=int)
+
+            message = "Image landmarks are {} but should be {} for {}".format(
+                lms.n_points, n_keypoints, index)
+            assert n_keypoints == lms.n_points, message
+
+            for i, l in enumerate(lms.points):
+                mask = im.as_masked().copy()
+                patches = np.ones((1, 1, 1, 13, 13), dtype=np.bool)
+
+                pc = mask.landmarks[None].lms.points[i][None, :]
+                mask.mask.pixels[...] = False
+                mask = mask.mask.set_patches(patches,
+                                             menpo.shape.PointCloud(pc))
+                kpts[mask.mask] = i + 1
+
+            return kpts.astype(np.float32)
+
+        kpts, = tf.py_func(wrapper, [index], [tf.float32])
+        kpts.set_shape([None, None])
+        mask = tf.ones_like(kpts)
+
+        # TODO: The mask should be the convex hull of the points.
+        return kpts, mask
+
+    def get_keypoints(self, index, shape, n_keypoints=16):
+        def wrapper(index):
+            path = self.root / (index.decode("utf-8") + '.' + self.image_extension)
+            im = mio.import_image(path, normalize=False)
+            lms = im.landmarks[None].lms
+
+            zeros = np.zeros(list(im.shape) + [n_keypoints])
+
+            message = "Image landmarks are {} but should be {} for {}".format(
+                lms.n_points, n_keypoints, index)
+            assert n_keypoints == lms.n_points, message
+
+            for i, l in enumerate(lms.points):
+                cy, cx = l # The center of circle
+
+                for radius, c in [(7, .1), (4, .4), (2, .7), (1, 1)]:
+                    try:
+                        # TODO: If circle is out of bounds draw only visible part.
+                        y, x = np.ogrid[-radius: radius, -radius: radius]
+                        index = x**2 + y**2 < radius**2
+                        zeros[cy-radius:cy+radius, cx-radius:cx+radius, i][index] = c
+                    except:
+                        print("Failed to draw circle for index {}".format(index))
+
+            return zeros.astype(np.float32)
+
+        kpts, = tf.py_func(wrapper, [index], [tf.float32])
+
+        kpts.set_shape([None, None, n_keypoints])
+        mask = tf.ones(shape)
+
+        # TODO: The mask should be the convex hull of the points.
+        return kpts, mask
 
 
 class Deblurring(Dataset):
@@ -342,7 +428,7 @@ class AFLW(Dataset):
 
 def get_pixels(im, channels=3):
     """Returns the pixels off an `Image`.
-    
+
     Args:
       im: A menpo `Image`.
     Returns:
@@ -427,8 +513,8 @@ class AFLWSingle(Dataset):
 
             im = crop_face(im)
             kpts = np.zeros(im.shape, dtype=int)
-            
-            
+
+
             for i in range(68):
                 mask = im.as_masked().copy()
                 patches = np.ones((1, 1, 1, 4, 4), dtype=np.bool)

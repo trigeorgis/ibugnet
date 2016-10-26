@@ -21,17 +21,19 @@ slim = tf.contrib.slim
 
 aflw_orthopdm = mio.import_pickle('aflw_orthopdm.pkl')
 
-keypoint_colours = np.array([plt.cm.spectral(x) for x in np.linspace(0, 1, 69)])[
-    ..., :3].astype(np.float32)
 
-def generate_heatmap(logits):
+def generate_heatmap(logits, num_classes=69):
+    
+
     """Generates a coloured heatmap from the keypoint logits.
 
     Args:
         features: A `Tensor` of dimensions [num_batch, height, width, 69].
     """
+    keypoint_colours = np.array([plt.cm.spectral(x) for x in np.linspace(0, 1, num_classes)])[..., :3].astype(np.float32)
+
     prediction = tf.nn.softmax(logits)
-    heatmap = tf.matmul(tf.reshape(prediction, (-1, 69)), keypoint_colours)
+    heatmap = tf.matmul(tf.reshape(prediction, (-1, num_classes)), keypoint_colours)
     heatmap = tf.reshape(heatmap, (tf.shape(prediction)[0],
                                    tf.shape(prediction)[1],
                                    tf.shape(prediction)[2], 3))

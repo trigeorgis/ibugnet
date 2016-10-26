@@ -72,28 +72,34 @@ class DatasetMixer():
             
     def get(self, *names):
         queue = None
-
+        enqueue_ops = []
         for p in self.providers:
-            ts = p.get(*names)
-            dtypes = [x.dtype for x in ts]
-            shapes = [x.get_shape() for x in ts]
+            tensors = p.get(*names, create_batches=True)
+            
+            shapes = [x.get_shape() for x in tensors]
 
 
             if queue is None:
+                dtypes = [x.dtype for x in tensors]
                 queue = tf.FIFOQueue(
                     capacity=1000,
-                    dtypes=dtypes)
+                    dtypes=dtypes, name='fifoqueue')
 
-            queue.enqueue_many(ts)
-            
-        ts = queue.dequeue()
-        for t, s in zip(ts, shapes):
+            enqueue_ops.append(queue.enqueue_many(tensors))
+
+        qr = tf.train.QueueRunner(queue, enqueue_ops)
+        tf.train.add_queue_runner(qr)      
+
+        tensors = queue.dequeue()
+        
+        for t, s in zip(tensors, shapes):
             t.set_shape(s[1:])
 
         return tf.train.batch(
-            ts,
+            tensors,
             self.batch_size,
-            num_threads=4,
+            num_threads=2,
+            enqueue_many=False,
             dynamic_pad=True,
             capacity=200)
 
@@ -103,10 +109,7 @@ def train():
     g = tf.Graph()
     with g.as_default():
         # Load datasets.
-        # provider = data_provider.BaselNormals()
-        # images, normals, mask = provider.get('normals/mask')
-        
-        provider = DatasetMixer(('BaselNormals',))
+        provider = DatasetMixer(('BaselNormals', 'MeinNormals'))
         images, normals, mask = provider.get('normals/mask')
         
         # Define model graph.
@@ -126,24 +129,30 @@ def train():
 
         optimizer = tf.train.AdamOptimizer(FLAGS.initial_learning_rate)
 
-    with tf.Session(graph=g) as sess:
+    config = tf.ConfigProto(inter_op_parallelism_threads=2)
+    with tf.Session(graph=g, config=config) as sess:
 
+        init_fn = None
         if FLAGS.pretrained_resnet_checkpoint_path:
-            restore_resnet(sess, FLAGS.pretrained_resnet_checkpoint_path)
+            init_fn = restore_resnet(sess, FLAGS.pretrained_resnet_checkpoint_path)
 
         if FLAGS.pretrained_model_checkpoint_path:
-            variables_to_restore = slim.get_variables_to_restore()
-            saver = tf.train.Saver(variables_to_restore)
-            saver.restore(sess, FLAGS.pretrained_model_checkpoint_path)
+            print('Loading whole model...')
+            variables_to_restore = slim.get_model_variables()
+            init_fn = slim.assign_from_checkpoint_fn(
+                    FLAGS.pretrained_model_checkpoint_path,
+                    variables_to_restore, ignore_missing_vars=True)
 
         train_op = slim.learning.create_train_op(total_loss,
                                                  optimizer,
                                                  summarize_gradients=True)
 
         logging.set_verbosity(1)
+        
         slim.learning.train(train_op,
                             FLAGS.train_dir,
                             save_summaries_secs=60,
+                            init_fn=init_fn,
                             save_interval_secs=600)
 
 

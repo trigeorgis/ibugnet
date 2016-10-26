@@ -6,10 +6,10 @@ import math
 slim = tf.contrib.slim
 
 FLAGS = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_string('checkpoint_dir', 'ckpt/train',
+tf.app.flags.DEFINE_string('checkpoint_dir', 'ckpt/train_normals',
                            '''Directory where to write event logs '''
                            '''and checkpoint.''')
-tf.app.flags.DEFINE_string('log_dir', 'ckpt/eval',
+tf.app.flags.DEFINE_string('log_dir', 'ckpt/eval_ict',
                            '''Directory where to write event logs '''
                            '''and checkpoint.''')
 tf.app.flags.DEFINE_integer('eval_interval_secs', 300, '''Run the evaluation every many secs.''')
@@ -18,7 +18,6 @@ def main():
     # Load the data
     provider = data_provider.ICT3DFE()
     images, normals, mask = provider.get('normals/mask')
-
 
     # Define the network
     with tf.variable_scope('net'):

@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-import resnet_model
+import svs_model
 import losses
 import data_provider
 import utils
@@ -66,7 +66,7 @@ def train():
     with g.as_default():
         # Load datasets.
         provider = data_provider.HumanPose()
-        images, ground_truth = provider.get('pose')
+        images, ground_truth, keypoints = provider.get('pose', 'keypoints')
 
         
         # TODO: Current code assumes batch_size=1. 
@@ -78,13 +78,13 @@ def train():
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
                                 is_training=True):
 
-                prediction, states = resnet_model.svs_regression_net_light(images, num_iterations=FLAGS.num_iterations)
+                states, results = svs_model.svs_regression_net_light(images, num_iterations=FLAGS.num_iterations)
                 
                 # States currently is
                 # (num_states, batch_size, height, width, num_parts)
 
         
-        # Add a cosine loss to every scale and the combined output.
+        # Add a smooth l1 loss to every scale and the combined output.
         for i, state in enumerate(states):
             gt = ground_truth[:, i, :, :, :]
 
@@ -99,7 +99,25 @@ def train():
             weights = tf.select(gt < 0, tf.zeros_like(gt), weights)
 
             loss = losses.smooth_l1(state, gt, weights)
-            tf.scalar_summary('losses/iteration_{}'.format(i), loss)
+            tf.scalar_summary('svs_losses/iteration_{}'.format(i), loss)
+
+        # Add a smooth l1 loss to every scale and the combined output.
+        for i, state in enumerate(results):
+            gt = keypoints
+
+            # TODO: Move 100 to a flag.
+            # Reweighting the loss by 100. If we do not do this 
+            # The loss becomes extremely small.
+            ones = tf.ones_like(gt)
+            
+            weights = tf.select(gt < .1, ones * 10, ones * 100)
+            
+            # The non-visible parts have a substracted value of a 100.
+            weights = tf.select(gt < 0, tf.zeros_like(gt), weights)
+
+            loss = losses.smooth_l1(state, gt, weights)
+            tf.scalar_summary('kpt_losses/iteration_{}'.format(i), loss)
+
 
         total_loss = slim.losses.get_total_loss()
         tf.scalar_summary('losses/total loss', total_loss)
@@ -112,6 +130,13 @@ def train():
                 state = states[i][..., j][..., None]
                 gt = ground_truth[:, i, ..., j][..., None]
                 tf.image_summary('state/it_{}/part_{}'.format(i, j),  tf.concat(2, (state, gt)))
+                
+
+            for j in range(16):
+                state = results[i][..., j][..., None]
+                gt = keypoints[..., j][..., None]
+                tf.image_summary('result/it_{}/kpt_{}'.format(i, j),  tf.concat(2, (state, gt)))
+                
 
         tf.image_summary('image', images)
             
