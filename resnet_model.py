@@ -1,5 +1,6 @@
 import tensorflow as tf
 import re
+import hourglass_model
 from tensorflow.contrib.slim import nets
 slim = tf.contrib.slim
 
@@ -210,16 +211,21 @@ def svs_regression_net(inputs, output_classes=7):
     return hidden, states
 
 
-def svs_landmark_regression_net(inputs, output_classes=13):
-    with tf.variable_scope('landmarks'):
-        with slim.arg_scope(nets.resnet_utils.resnet_arg_scope()):
-            net, layers = nets.resnet_v1.resnet_v1_50(inputs, output_classes)
 
-        out_shape = tf.shape(inputs)[1:3]
+def svs_landmark_regression_net(images, output_svs=5, output_lms=13, num_iterations=4):
+    # Define model graph.
+    with tf.variable_scope('net'):
+        with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
+                            is_training=True):
 
-        net = tf.image.resize_bilinear(net, out_shape, name="up_nrm")
+            # svs regression net
+            prediction, states = svs_regression_net_light(images, output_classes=output_svs, num_iterations=num_iterations)
+            # States currently is
+            # (num_states, batch_size, height, width, num_parts)
+            net = tf.concat(3, [images] + states, name='concat-bridge')
+            lms_heatmap_prediction = hourglass_model.network(net, 1, output_channels=output_lms)
 
-    return net, layers
+    return prediction, states, lms_heatmap_prediction
 
 
 def multiscale_deblurring_net(inputs, scales=(1, 2, 4)):

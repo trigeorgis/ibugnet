@@ -1,9 +1,11 @@
 import tensorflow as tf
 import numpy as np
 import resnet_model
+import hourglass_model
 import losses
 import data_provider
 import utils
+import matplotlib.pyplot as plt
 
 from tensorflow.python.platform import tf_logging as logging
 from pathlib import Path
@@ -11,7 +13,7 @@ from pathlib import Path
 slim = tf.contrib.slim
 
 FLAGS = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_float('initial_learning_rate', 0.0005,
+tf.app.flags.DEFINE_float('initial_learning_rate', 0.001,
                           '''Initial learning rate.''')
 tf.app.flags.DEFINE_float('num_epochs_per_decay', 5.0,
                           '''Epochs after which learning rate decays.''')
@@ -42,6 +44,22 @@ tf.app.flags.DEFINE_string('train_device', '/gpu:0',
 # The decay to use for the moving average.
 MOVING_AVERAGE_DECAY = 0.9999
 
+
+keypoint_colours = np.array([plt.cm.spectral(x) for x in np.linspace(0, 1, 14)])[
+    ..., :3].astype(np.float32)
+
+def generate_heatmap(logits):
+    """Generates a coloured heatmap from the keypoint logits.
+
+    Args:
+        features: A `Tensor` of dimensions [num_batch, height, width, 14].
+    """
+    prediction = tf.nn.softmax(logits)
+    heatmap = tf.matmul(tf.reshape(prediction, (-1, 14)), keypoint_colours)
+    heatmap = tf.reshape(heatmap, (tf.shape(prediction)[0],
+                                   tf.shape(prediction)[1],
+                                   tf.shape(prediction)[2], 3))
+    return heatmap
 
 def restore_resnet(sess, path):
     def name_in_checkpoint(var):
@@ -145,38 +163,26 @@ def train(output_classes=5):
                             save_interval_secs=600)
 
 
-
-def train_lmr(output_classes=5):
+def train_lmr(output_svs=5, output_lms=14):
     g = tf.Graph()
 
     with g.as_default():
         # Load datasets.
         provider = data_provider.HumanPose(batch_size=FLAGS.batch_size)
-        images, ground_truth, ground_truth_mask, gt_heatmap, gt_heatmap_mask = \
-            provider.get('pose/mask','heatmap/mask')
-
+        images, ground_truth, ground_truth_mask, keypoints, keypoints_mask = \
+            provider.get('pose/mask','keypoints/mask')
 
         # TODO: Current code assumes batch_size=1.
         # The states Tensor must be of dimensions
         # (batch_size, num_states, height, width, num_parts)
 
         # Define model graph.
-        with tf.variable_scope('net'):
-            with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
-                                is_training=True):
-
-                # svs regression net
-                prediction, states = resnet_model.svs_regression_net_light(images, output_classes=output_classes, num_iterations=FLAGS.num_iterations)
-                # States currently is
-                # (num_states, batch_size, height, width, num_parts)
-                net = slim.conv2d(
-                    prediction, 3, (1, 1), scope='bridge', activation_fn=None)
-                lms_heatmap_prediction, _ = resnet_model.svs_landmark_regression_net(net)
-
+        prediction, states, lms_heatmap_prediction = resnet_model.svs_landmark_regression_net(images, output_svs=output_svs, output_lms=output_lms, num_iterations=FLAGS.num_iterations)
 
         # Add a cosine loss to every scale and the combined output.
         for i, state in enumerate(states):
             gt = ground_truth[:, i, :, :, :]
+            gt_mask = ground_truth_mask[:, i, :, :, :]
 
             # TODO: Move 100 to a flag.
             # Reweighting the loss by 100. If we do not do this
@@ -186,33 +192,54 @@ def train_lmr(output_classes=5):
             weights = tf.select(gt < .1, ones, ones * 100)
 
             # The non-visible parts have a substracted value of a 100.
-            weights = tf.select(gt < 0, tf.zeros_like(gt), weights) * ground_truth_mask
+            weights = tf.select(gt < 0, tf.zeros_like(gt), weights) * gt_mask
 
             loss = losses.smooth_l1(state, gt, weights)
             tf.scalar_summary('losses/iteration_{}'.format(i), loss)
 
         # Heatmap losses
-        ones_hm = tf.ones_like(gt_heatmap)
-        weights_hm = tf.select(gt_heatmap < .1, ones_hm, ones_hm * 10000) * gt_heatmap_mask
-        loss_hm = losses.smooth_l1(lms_heatmap_prediction, gt_heatmap, weights_hm)
+        keypoints = tf.to_int32(keypoints)
+
+        is_background = tf.equal(keypoints, 0)
+        ones = tf.to_float(tf.ones_like(is_background))
+        zeros = tf.to_float(tf.zeros_like(is_background))
+
+        tf.image_summary('gt', tf.select(is_background, zeros, ones) * tf.to_float(keypoints_mask) * 255)
+        tf.image_summary('predictions', generate_heatmap(lms_heatmap_prediction))
+        tf.image_summary('mask', keypoints_mask)
+        tf.image_summary('images', images)
+
+        weights = tf.select(is_background, ones * 0.1, ones) * tf.to_float(keypoints_mask)
+
+        background_is_very_confident = tf.nn.softmax(lms_heatmap_prediction)[..., :1] > .9
+        prediction_is_actually_background = tf.equal(
+            background_is_very_confident, is_background)
+
+        weights = tf.select(prediction_is_actually_background, zeros, weights)
+        weights = tf.reshape(weights, (-1,))
+        weights.set_shape([None,])
+
+        # Add a cosine loss to every scale and the combined output.
+        lms_heatmap_prediction = tf.reshape(lms_heatmap_prediction, (-1, output_lms))
+        keypoints = tf.reshape(keypoints, (-1,))
+        keypoints = slim.layers.one_hot_encoding(keypoints, num_classes=output_lms)
+        loss_hm = slim.losses.softmax_cross_entropy(lms_heatmap_prediction, keypoints, weight=weights)
         tf.scalar_summary('losses/heatmap', loss_hm)
 
+        # total losses
         total_loss = slim.losses.get_total_loss()
         tf.scalar_summary('losses/total loss', total_loss)
+
+
 
         for i in range(len(states)):
             tf.image_summary('state/it_{}'.format(i), tf.reduce_sum(states[i], -1)[..., None])
             tf.image_summary('gt/it_{}'.format(i), tf.reduce_sum(ground_truth[:, i, :, :, :], -1)[..., None])
 
-            for j in range(output_classes):
+            for j in range(output_svs):
                 state = states[i][..., j][..., None]
                 gt = ground_truth[:, i, ..., j][..., None]
                 tf.image_summary('state/it_{}/part_{}'.format(i, j),  tf.concat(2, (state, gt)))
-
-        tf.image_summary('image', images)
-        tf.image_summary('gt_heatmap_mask', tf.reduce_sum(gt_heatmap_mask, -1)[..., None])
-        tf.image_summary('gt_heatmap', tf.reduce_sum(gt_heatmap,-1)[..., None])
-        tf.image_summary('pred_heatmap', tf.reduce_sum(lms_heatmap_prediction,-1)[..., None])
 
         optimizer = tf.train.AdamOptimizer(FLAGS.initial_learning_rate)
 

@@ -45,7 +45,7 @@ class Dataset(object):
         self.image_extension = 'png'
         self.images_root = 'images'
 
-    def rescale_image(self, image, method=0):
+    def rescale_image(self, image, method=0, image_shape=None):
         return _rescale_image(image, method=0)
 
     def num_samples(self):
@@ -121,7 +121,7 @@ class Dataset(object):
         key = producer.dequeue()
         images = self.get_images(key)
         image_shape = tf.shape(images)
-        images = self.rescale_image(images)
+        images = self.rescale_image(images, image_shape=image_shape)
 
         if preprocess_inputs:
             images = self.preprocess(images)
@@ -134,10 +134,10 @@ class Dataset(object):
                 len(name.split('/')) > 1) and name.split('/')[1] == 'mask'
 
             label, mask = fun(key, shape=image_shape)
-            tensors.append(self.rescale_image(label, method=1))
+            tensors.append(self.rescale_image(label, method=name.split('/')[0], image_shape=image_shape))
 
             if use_mask:
-                tensors.append(self.rescale_image(mask, method=1))
+                tensors.append(self.rescale_image(mask, method=name, image_shape=image_shape))
 
         if not create_batches:
             return tensors
@@ -188,10 +188,10 @@ class MeinNormals(Dataset):
 
 
 class HumanPose(Dataset):
-    def __init__(self, batch_size=1):
+    def __init__(self, batch_size=1, root='/data/yz4009/'):
         super().__init__(
             'human_pose',
-            Path('/data/yz4009/'),
+            Path(root),
             batch_size=batch_size)
         self.image_extension = 'jpg'
         self.images_root = '.'
@@ -199,6 +199,7 @@ class HumanPose(Dataset):
     def get_keys(self):
         if (self.root / 'keys.pkl').exists():
             keys = mio.import_pickle(self.root / 'keys.pkl')
+            self._keys = keys
             return tf.constant(keys)
 
         path = self.root
@@ -217,8 +218,21 @@ class HumanPose(Dataset):
             raise RuntimeError('No images found in {}'.format(path))
         return tf.constant(keys, tf.string)
 
-    def rescale_image(self, image, method=None):
-        return image
+    def rescale_image(self, image, method=None, image_shape=None):
+        if not image_shape is None:
+            h, w = tf.to_float(image_shape[0]), tf.to_float(image_shape[1])
+            scale = tf.reduce_max([h,w]) / 256.0
+            nh, nw = tf.to_int32(h/scale), tf.to_int32(w/scale)
+
+            if not method is None:
+                if method.split('/')[0] == 'landmarks':
+                    return image / scale
+                elif method.split('/')[0] == 'pose':
+                    return tf.image.resize_bilinear(image, [nh, nw])
+
+            return tf.image.resize_bilinear(image[None, ...], [nh, nw])[0]
+        else:
+            return image
 
     def get_pose(self, index, shape):
         def wrapper(index):
@@ -246,6 +260,50 @@ class HumanPose(Dataset):
         hm, = tf.py_func(wrapper, [index], [tf.float32])
         hm.set_shape([None, None, 13])
         return hm, tf.ones_like(hm)
+
+    def get_landmarks(self, index, shape):
+        def wrapper(index):
+            index = index.decode("utf-8")
+            lms = mio.import_landmark_file(
+                self.root / '{}.ljson'.format(index))
+            return lms.lms.points.astype(np.float32)
+
+        lms, = tf.py_func(wrapper, [index], [tf.float32])
+        lms.set_shape([13,2])
+        return lms, None
+
+    def get_keypoints(self, index, shape):
+        def wrapper(index, shape):
+            index = index.decode("utf-8")
+
+            kpts = np.zeros(shape[:2], dtype=int)
+            im = Image(kpts)
+            mask = np.ones(list(shape[:2]) + [1]).astype(np.float32)
+
+            path = self.root / '{}.ljson'.format(index)
+            lms = mio.import_landmark_file(path).lms
+
+            for i in range(lms.n_points):
+                lms_mask = im.as_masked().copy()
+                patches = np.ones((1, 1, 1, 13, 13), dtype=np.bool)
+
+                pc = lms.points[i][None, :]
+                lms_mask.mask.pixels[...] = False
+                lms_mask = lms_mask.mask.set_patches(
+                    patches, menpo.shape.PointCloud(pc))
+                kpts[lms_mask.mask] = i + 1
+
+            return kpts.astype(np.int32), mask.astype(np.int32)
+
+        kpts, mask = tf.py_func(wrapper, [index, shape], [tf.int32, tf.int32])
+
+        kpts = tf.expand_dims(tf.reshape(kpts, shape[:2]), 2)
+        mask = tf.expand_dims(tf.reshape(mask, shape[:2]), 2)
+
+        kpts.set_shape([None, None, 1])
+
+        return kpts, mask
+
 
 
 class Deblurring(Dataset):
