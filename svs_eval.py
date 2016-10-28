@@ -47,58 +47,81 @@ MOVING_AVERAGE_DECAY = 0.9999
 
 
 def ced_accuracy(t, dists):
-    return tf.reduce_sum(tf.to_int32(dists <= t), 1) / tf.shape(dists)[1]
+    # Head	 Shoulder	Elbow	Wrist	Hip	   Knee	   Ankle
+    pts_r  = tf.transpose(tf.gather(tf.transpose(dists), [8,12,11,10,2,1,0]))
+    pts_l  = tf.transpose(tf.gather(tf.transpose(dists), [9,13,14,15,3,4,5]))
+    part_pckh = (tf.to_int32(pts_r <= t) + tf.to_int32(pts_l <= t)) / 2
+
+    return tf.concat(1, [part_pckh, tf.reduce_sum(tf.to_int32(dists <= t), 1)[...,None] / tf.shape(dists)[1]])
 
 
 def pckh(preds, gts):
     t_range = np.arange(0,0.51,0.01)
     dists = tf.sqrt(tf.reduce_sum(tf.pow(preds - gts, 2), reduction_indices=-1)) / 4.5
-    pckh = [ced_accuracy(t, dists) for t in t_range]
-    return pckh[-1]
+    # pckh = [ced_accuracy(t, dists) for t in t_range]
+    # return pckh[-1]
+    return ced_accuracy(0.5, dists)
 
 keypoint_colours = np.array(
-    [plt.cm.spectral(x) for x in np.linspace(0, 1, 13)]
+    [plt.cm.spectral(x) for x in np.linspace(0, 1, 17)]
 )[..., :3].astype(np.float32)
 
 def generate_heatmap(logits):
     """Generates a coloured heatmap from the keypoint logits.
 
     Args:
-        features: A `Tensor` of dimensions [num_batch, height, width, 13].
+        features: A `Tensor` of dimensions [num_batch, height, width, 17].
     """
     prediction = tf.nn.softmax(logits)
-    heatmap = tf.matmul(tf.reshape(prediction, (-1, 13)), keypoint_colours)
+    heatmap = tf.matmul(tf.reshape(prediction, (-1, 17)), keypoint_colours)
     heatmap = tf.reshape(heatmap, (tf.shape(prediction)[0],
                                    tf.shape(prediction)[1],
                                    tf.shape(prediction)[2], 3))
     return heatmap
 
 
-def test(output_svs=5, output_lms=13, num_iterations=4):
+def generate_landmarks(keypoints):
+    is_background = tf.equal(keypoints, 0)
+    ones = tf.to_float(tf.ones_like(is_background))
+    zeros = tf.to_float(tf.zeros_like(is_background))
+
+    return tf.select(is_background, zeros, ones) * 255
+
+def test(output_svs=5, output_lms=16, num_iterations=4):
     g = tf.Graph()
 
     with g.as_default():
-        # Load datasets.
-        provider = data_provider.HumanPose(batch_size=FLAGS.batch_size)
-        images, gt_landmarks = provider.get('landmarks')
+        # Load dataset.
+        provider = data_provider.HumanPose(batch_size=FLAGS.batch_size, root='/vol/atlas/databases/body/SupportVectorBody/crop-mpii/', n_lms=output_lms)
+        images, keypoints_visible, keypoints_visible_mask, heatmap, heatmap_mask, gt_landmarks = provider.get('keypoints_visible/mask','heatmap/mask','landmarks')
 
-        tf.image_summary('images', images)
+        def keypts_encoding(keypoints):
+            keypoints = tf.to_int32(keypoints)
+            keypoints = tf.reshape(keypoints, (-1,))
+            keypoints = slim.layers.one_hot_encoding(keypoints, num_classes=output_lms+1)
+            return keypoints
+
+        def get_weight(keypoints, mask, ng_w=0.01, ps_w=1.0):
+            is_background = tf.equal(keypoints, 0)
+            ones = tf.to_float(tf.ones_like(is_background))
+            zeros = tf.to_float(tf.zeros_like(is_background))
+            weights = tf.select(is_background, ones * ng_w, ones*ps_w) * tf.to_float(mask)
+
+            return weights
 
         # Define model graph.
         with tf.variable_scope('net'):
             with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
                                 is_training=True):
-
-                # svs regression net
-                prediction, states = resnet_model.svs_regression_net_light(images, output_classes=output_svs, num_iterations=num_iterations)
-                # States currently is
-                # (num_states, batch_size, height, width, num_parts)
-                net = tf.concat(3, [images, prediction], name='concat-bridge')
-                lms_heatmap_prediction = hourglass_model.network(net, 1, output_channels=output_lms)
+                # Part-detector net that is trained only on the visible points.
+                part_prediction, pyramid, _ = resnet_model.multiscale_kpts_net(images, scales=(1, 2), num_keypoints=output_lms+1)
+                net = tf.concat(3, [part_prediction, images])
+                # Regressor net that is trained on the whole points.
+                lms_prediction = hourglass_model.network(net, 1, output_channels=output_lms)
 
 
-        hs = tf.argmax(tf.reduce_max(lms_heatmap_prediction, 2), 1)
-        ws = tf.argmax(tf.reduce_max(lms_heatmap_prediction, 1), 1)
+        hs = tf.argmax(tf.reduce_max(lms_prediction, 2), 1)
+        ws = tf.argmax(tf.reduce_max(lms_prediction, 1), 1)
         predictions = tf.transpose(tf.to_float(tf.pack([hs, ws])), perm=[1, 2, 0])
 
     with tf.Session(graph=g) as sess:
@@ -108,7 +131,15 @@ def test(output_svs=5, output_lms=13, num_iterations=4):
         # These are streaming metrics which compute the "running" metric,
         # e.g running accuracy
         metrics_to_values, metrics_to_updates = slim.metrics.aggregate_metric_map({
-            "streaming_pckh": slim.metrics.streaming_mean(tf.reduce_mean(accuracy)),
+            # Head	 Shoulder	Elbow	Wrist	Hip	   Knee	   Ankle
+            "losses/pckh_All": slim.metrics.streaming_mean(accuracy[:,-1]),
+            "losses/pckh_Head": slim.metrics.streaming_mean(accuracy[:,0]),
+            "losses/pckh_Shoulder": slim.metrics.streaming_mean(accuracy[:,1]),
+            "losses/pckh_Elbow": slim.metrics.streaming_mean(accuracy[:,2]),
+            "losses/pckh_Wrist": slim.metrics.streaming_mean(accuracy[:,3]),
+            "losses/pckh_Hip": slim.metrics.streaming_mean(accuracy[:,4]),
+            "losses/pckh_Knee": slim.metrics.streaming_mean(accuracy[:,5]),
+            "losses/pckh_Ankle": slim.metrics.streaming_mean(accuracy[:,6])
         })
 
         # Define the streaming summaries to write:
@@ -118,11 +149,18 @@ def test(output_svs=5, output_lms=13, num_iterations=4):
             op = tf.Print(op, [metric_value], metric_name)
             summary_ops.append(op)
 
-        summary_ops.append(tf.scalar_summary('accuracy_pckh', tf.reduce_mean(accuracy)))
+        summary_ops.append(tf.scalar_summary('losses/running_pckh', tf.reduce_mean(accuracy[:,-1])))
 
-        summary_ops.append(
-            tf.image_summary('prediction',
-                             generate_heatmap(lms_heatmap_prediction)))
+
+        summary_ops.append(tf.image_summary('predictions/part-detection', generate_heatmap(part_prediction) * tf.to_float(keypoints_visible_mask)))
+        summary_ops.append(tf.image_summary('predictions/landmark-regression', tf.reduce_sum(lms_prediction * tf.to_float(heatmap_mask), -1)[...,None] * 255.0))
+        summary_ops.append(tf.image_summary('images', images, max_images=min(FLAGS.batch_size,4)))
+
+
+        summary_ops.append(tf.image_summary('gt/visiable', generate_landmarks(keypoints_visible) + images * 0.1))
+        summary_ops.append(tf.image_summary('gt/all', tf.reduce_sum(heatmap * tf.to_float(heatmap_mask), -1)[...,None] * 255.0))
+        summary_ops.append(tf.image_summary('mask', keypoints_visible_mask, max_images=min(FLAGS.batch_size,4)))
+
 
         global_step = slim.get_or_create_global_step()
         # Evaluate every 30 seconds
@@ -137,6 +175,7 @@ def test(output_svs=5, output_lms=13, num_iterations=4):
             eval_op=list(metrics_to_updates.values()),
             summary_op=tf.merge_summary(summary_ops),
             eval_interval_secs=30)
+
 
 
 if __name__ == '__main__':

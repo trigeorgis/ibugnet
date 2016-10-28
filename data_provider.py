@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 import menpo.io as mio
 import menpo
+import scipy
 
 from pathlib import Path
 from scipy.io import loadmat
@@ -188,13 +189,15 @@ class MeinNormals(Dataset):
 
 
 class HumanPose(Dataset):
-    def __init__(self, batch_size=1, root='/data/yz4009/'):
+    def __init__(self, batch_size=1, root='/data/yz4009/', valid_check=False, n_lms=16):
         super().__init__(
             'human_pose',
             Path(root),
             batch_size=batch_size)
         self.image_extension = 'jpg'
         self.images_root = '.'
+        self.valid_check =valid_check
+        self.n_lms = n_lms
 
     def get_keys(self):
         if (self.root / 'keys.pkl').exists():
@@ -208,7 +211,10 @@ class HumanPose(Dataset):
             return all([(path / '{}+svs_dark+{:02d}.pkl'.format(x, i)).exists()
                         for i in [0, 1, 2, 4]])
 
-        keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)]
+        if self.valid_check:
+            keys = [str(x.stem) for x in path.glob('*.jpg') if check_valid(x.stem)]
+        else:
+            keys = [str(x.stem) for x in path.glob('*.jpg')]
         self._keys = keys
 
         mio.export_pickle(keys, self.root / 'keys.pkl')
@@ -251,14 +257,21 @@ class HumanPose(Dataset):
         return svs, tf.ones_like(svs)
 
     def get_heatmap(self, index, shape):
-        def wrapper(index):
+        def wrapper(index, shape):
             index = index.decode("utf-8")
-            hm = mio.import_pickle(
-                self.root / '{}+hm.pkl'.format(index))
-            return hm.pixels_with_channels_at_back().astype(np.float32)
+            lms = mio.import_landmark_file(
+                self.root / '{}.ljson'.format(index))
 
-        hm, = tf.py_func(wrapper, [index], [tf.float32])
-        hm.set_shape([None, None, 13])
+            img_hm = Image.init_blank(shape[:2], n_channels=lms.n_landmarks)
+            for c,(h,w) in enumerate(np.round(lms.lms.points)):
+                img_hm.pixels[c,h-3:h+3,w-3:w+3] = 1
+            ghm = Image(np.stack([scipy.ndimage.gaussian_filter(cimg, 5) for cimg in img_hm.pixels], axis=0))
+
+            hm = ghm.pixels_with_channels_at_back().astype(np.float32)
+            return hm
+
+        hm, = tf.py_func(wrapper, [index, shape], [tf.float32])
+        hm.set_shape([None, None, self.n_lms])
         return hm, tf.ones_like(hm)
 
     def get_landmarks(self, index, shape):
@@ -269,7 +282,7 @@ class HumanPose(Dataset):
             return lms.lms.points.astype(np.float32)
 
         lms, = tf.py_func(wrapper, [index], [tf.float32])
-        lms.set_shape([13,2])
+        lms.set_shape([self.n_lms,2])
         return lms, None
 
     def get_keypoints(self, index, shape):
@@ -292,6 +305,44 @@ class HumanPose(Dataset):
                 lms_mask = lms_mask.mask.set_patches(
                     patches, menpo.shape.PointCloud(pc))
                 kpts[lms_mask.mask] = i + 1
+
+            return kpts.astype(np.int32), mask.astype(np.int32)
+
+        kpts, mask = tf.py_func(wrapper, [index, shape], [tf.int32, tf.int32])
+
+        kpts = tf.expand_dims(tf.reshape(kpts, shape[:2]), 2)
+        mask = tf.expand_dims(tf.reshape(mask, shape[:2]), 2)
+
+        kpts.set_shape([None, None, 1])
+
+        return kpts, mask
+
+    def get_keypoints_visible(self, index, shape):
+        def wrapper(index, shape):
+            index = index.decode("utf-8")
+
+            kpts = np.zeros(shape[:2], dtype=int)
+            im = Image(kpts)
+            mask = np.ones(list(shape[:2]) + [1]).astype(np.float32)
+
+            path = self.root / '{}.ljson'.format(index)
+            lms = mio.import_landmark_file(path)
+            pts_v = lms['visible'].points
+            pts_all = lms.lms.points
+            visible_index = np.array([
+                np.argwhere(np.linalg.norm(pts_all - v, axis=-1) == 0)
+                for v in pts_v]).squeeze()
+
+            for i in range(pts_all.shape[0]):
+                if i in visible_index:
+                    lms_mask = im.as_masked().copy()
+                    patches = np.ones((1, 1, 1, 13, 13), dtype=np.bool)
+
+                    pc = pts_all[i][None, :]
+                    lms_mask.mask.pixels[...] = False
+                    lms_mask = lms_mask.mask.set_patches(
+                        patches, menpo.shape.PointCloud(pc))
+                    kpts[lms_mask.mask] = i + 1
 
             return kpts.astype(np.int32), mask.astype(np.int32)
 

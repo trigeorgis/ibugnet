@@ -3,7 +3,7 @@ import re
 from tensorflow.contrib.slim import nets
 slim = tf.contrib.slim
 
-def hourglass_arg_scope(weight_decay=0.0001,
+def hourglass_arg_scope(weight_decay=0.00005,
                      batch_norm_decay=0.997,
                      batch_norm_epsilon=1e-5,
                      batch_norm_scale=True):
@@ -77,7 +77,8 @@ def network(inputs,
         net = slim.stack(net, slim.conv2d, [(512,[1,1]), (256,[1,1]), (output_channels,[1,1])], scope='conv3')
         net = tf.image.resize_bilinear(net, out_shape, name="up_sample")
 
-        return net
+    net = slim.conv2d(net, output_channels, 1, activation_fn=None)
+    return net
 
 
 def hourglass_module(inputs, depth=0):
@@ -105,9 +106,11 @@ def hourglass_module(inputs, depth=0):
 def bottleneck_module(inputs, out_channel=256, res=None, scope=''):
 
     with tf.variable_scope(scope):
-        net = slim.stack(inputs, slim.conv2d, [(out_channel//2, [1, 1]), (out_channel//2, [3, 3]), (out_channel, [1, 1])], scope='conv')
+        net = slim.batch_norm(inputs, activation_fn=tf.nn.relu)
+        net = slim.stack(net, slim.conv2d, [(out_channel//2, [1, 1]), (out_channel//2, [3, 3])], scope='conv')
+        net = slim.conv2d(net, out_channel, [1, 1], activation_fn=None, normalizer_fn=None)
         if res:
-            inputs = slim.conv2d(inputs, res, (1, 1), scope='bn_res'.format(scope))
+            inputs = slim.conv2d(inputs, res, (1, 1), scope='bn_res', activation_fn=None, normalizer_fn=None)
         net += inputs
 
         return net

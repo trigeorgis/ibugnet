@@ -72,7 +72,7 @@ def train(output_classes=14):
                                 is_training=True):
 
                 # lms regression net
-                prediction = hourglass_model.test_network(images, 1, output_channels=output_classes)
+                prediction = hourglass_model.network(images, 1, output_channels=output_classes)
 
 
         # losses l1 smooth
@@ -123,13 +123,7 @@ def train(output_classes=14):
             pass
 
         if FLAGS.pretrained_model_checkpoint_path:
-            print('Loading whole model...')
-            variables_to_restore = slim.get_model_variables()
-            init_fn = slim.assign_from_checkpoint_fn(
-                FLAGS.pretrained_model_checkpoint_path,
-                {'/'.join(var.op.name.split('/')[1:]):var for var in variables_to_restore if 'logits' not in var.name and not 'adam' in var.name.lower()},
-                ignore_missing_vars=True)
-
+            pass
 
         train_op = slim.learning.create_train_op(total_loss,
                                                  optimizer,
