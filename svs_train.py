@@ -13,11 +13,13 @@ from pathlib import Path
 slim = tf.contrib.slim
 
 FLAGS = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_float('initial_learning_rate', 0.001,
+tf.app.flags.DEFINE_float('initial_learning_rate', 0.0001,
                           '''Initial learning rate.''')
 tf.app.flags.DEFINE_float('num_epochs_per_decay', 5.0,
                           '''Epochs after which learning rate decays.''')
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.97,
+                          '''Learning rate decay factor.''')
+tf.app.flags.DEFINE_float('learning_rate_decay_step', 10000,
                           '''Learning rate decay factor.''')
 tf.app.flags.DEFINE_integer('batch_size', 1, '''The batch size to use.''')
 tf.app.flags.DEFINE_integer('num_iterations', 4, '''The number of iterations to unfold the pose machine.''')
@@ -278,7 +280,10 @@ def train_bl(output_lms=16):
 
     with g.as_default():
         # Load dataset.
-        provider = data_provider.HumanPose(batch_size=FLAGS.batch_size, root='/vol/atlas/databases/body/SupportVectorBody/crop-mpii/', n_lms=output_lms)
+        provider = data_provider.HumanPose(
+            batch_size=FLAGS.batch_size,
+            root='/vol/atlas/databases/body/SupportVectorBody/crop-mpii-train/',
+            n_lms=output_lms)
         images, keypoints_visible, keypoints_visible_mask, heatmap, heatmap_mask = provider.get('keypoints_visible/mask','heatmap/mask')
 
         def keypts_encoding(keypoints):
@@ -315,7 +320,6 @@ def train_bl(output_lms=16):
         tf.image_summary('gt/all', tf.reduce_sum(heatmap * tf.to_float(heatmap_mask), -1)[...,None] * 255.0, max_images=min(FLAGS.batch_size,4))
         tf.image_summary('mask', keypoints_visible_mask, max_images=min(FLAGS.batch_size,4))
 
-
         # Add a cosine loss to every scale and the combined output.
         # part-detection losses
         kps_visiable, weight_visible = keypts_encoding(keypoints_visible), get_weight(keypoints_visible, keypoints_visible_mask)
@@ -337,7 +341,20 @@ def train_bl(output_lms=16):
         total_loss = slim.losses.get_total_loss()
         tf.scalar_summary('losses/total loss', total_loss)
 
-        optimizer = tf.train.AdamOptimizer(FLAGS.initial_learning_rate)
+
+        # learning rate decay
+        global_step = slim.get_or_create_global_step()
+
+        learning_rate = tf.train.exponential_decay(
+            FLAGS.initial_learning_rate,
+            global_step,
+            FLAGS.learning_rate_decay_step / FLAGS.batch_size,
+            FLAGS.learning_rate_decay_factor,
+            staircase=True)
+
+        tf.scalar_summary('learning rate', learning_rate)
+
+        optimizer = tf.train.AdamOptimizer(learning_rate)
 
     with tf.Session(graph=g) as sess:
         init_fn = None

@@ -228,6 +228,7 @@ class HumanPose(Dataset):
         if not image_shape is None:
             h, w = tf.to_float(image_shape[0]), tf.to_float(image_shape[1])
             scale = tf.reduce_max([h,w]) / 256.0
+            # scale = 1
             nh, nw = tf.to_int32(h/scale), tf.to_int32(w/scale)
 
             if not method is None:
@@ -239,6 +240,7 @@ class HumanPose(Dataset):
             return tf.image.resize_bilinear(image[None, ...], [nh, nw])[0]
         else:
             return image
+
 
     def get_pose(self, index, shape):
         def wrapper(index):
@@ -261,11 +263,16 @@ class HumanPose(Dataset):
             index = index.decode("utf-8")
             lms = mio.import_landmark_file(
                 self.root / '{}.ljson'.format(index))
+            marked_index = label_index(lms, 'marked')
 
             img_hm = Image.init_blank(shape[:2], n_channels=lms.n_landmarks)
             for c,(h,w) in enumerate(np.round(lms.lms.points)):
-                img_hm.pixels[c,h-3:h+3,w-3:w+3] = 1
-            ghm = Image(np.stack([scipy.ndimage.gaussian_filter(cimg, 5) for cimg in img_hm.pixels], axis=0))
+                if c in marked_index:
+                    try:
+                        img_hm.pixels[c,np.ceil(h),np.ceil(w)] = 1
+                    except Exception as e:
+                        print(e)
+            ghm = Image(np.stack([scipy.ndimage.gaussian_filter(cimg, 7) for cimg in img_hm.pixels], axis=0))
 
             hm = ghm.pixels_with_channels_at_back().astype(np.float32)
             return hm
@@ -279,11 +286,16 @@ class HumanPose(Dataset):
             index = index.decode("utf-8")
             lms = mio.import_landmark_file(
                 self.root / '{}.ljson'.format(index))
-            return lms.lms.points.astype(np.float32)
+            marked_index = label_index(lms, 'marked')
+            mask = np.zeros(lms.lms.points.shape).astype(np.int32)
 
-        lms, = tf.py_func(wrapper, [index], [tf.float32])
+            mask[[marked_index],:] = 1
+            return lms.lms.points.astype(np.float32), mask
+
+        lms, mask = tf.py_func(wrapper, [index], [tf.float32, tf.int32])
         lms.set_shape([self.n_lms,2])
-        return lms, None
+        mask.set_shape([self.n_lms,2])
+        return lms, mask
 
     def get_keypoints(self, index, shape):
         def wrapper(index, shape):
@@ -294,17 +306,19 @@ class HumanPose(Dataset):
             mask = np.ones(list(shape[:2]) + [1]).astype(np.float32)
 
             path = self.root / '{}.ljson'.format(index)
-            lms = mio.import_landmark_file(path).lms
+            lms = mio.import_landmark_file(path)
+            marked_index = label_index(lms, 'marked')
 
-            for i in range(lms.n_points):
-                lms_mask = im.as_masked().copy()
-                patches = np.ones((1, 1, 1, 13, 13), dtype=np.bool)
+            for i in range(lms.lms.n_points):
+                if i in marked_index:
+                    lms_mask = im.as_masked().copy()
+                    patches = np.ones((1, 1, 1, 13, 13), dtype=np.bool)
 
-                pc = lms.points[i][None, :]
-                lms_mask.mask.pixels[...] = False
-                lms_mask = lms_mask.mask.set_patches(
-                    patches, menpo.shape.PointCloud(pc))
-                kpts[lms_mask.mask] = i + 1
+                    pc = lms.lms.points[i][None, :]
+                    lms_mask.mask.pixels[...] = False
+                    lms_mask = lms_mask.mask.set_patches(
+                        patches, menpo.shape.PointCloud(pc))
+                    kpts[lms_mask.mask] = i + 1
 
             return kpts.astype(np.int32), mask.astype(np.int32)
 
@@ -327,11 +341,8 @@ class HumanPose(Dataset):
 
             path = self.root / '{}.ljson'.format(index)
             lms = mio.import_landmark_file(path)
-            pts_v = lms['visible'].points
             pts_all = lms.lms.points
-            visible_index = np.array([
-                np.argwhere(np.linalg.norm(pts_all - v, axis=-1) == 0)
-                for v in pts_v]).squeeze()
+            visible_index = label_index(lms, 'visible')
 
             for i in range(pts_all.shape[0]):
                 if i in visible_index:
@@ -356,6 +367,10 @@ class HumanPose(Dataset):
         return kpts, mask
 
 
+def label_index(lms, label):
+    pts_v = lms[label].points
+    pts_all = lms.lms.points
+    return np.array([np.argwhere(np.linalg.norm(pts_all - v, axis=-1) == 0) for v in pts_v]).squeeze()
 
 class Deblurring(Dataset):
     def __init__(self, batch_size=1):

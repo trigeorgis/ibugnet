@@ -92,7 +92,7 @@ def test(output_svs=5, output_lms=16, num_iterations=4):
 
     with g.as_default():
         # Load dataset.
-        provider = data_provider.HumanPose(batch_size=FLAGS.batch_size, root='/vol/atlas/databases/body/SupportVectorBody/crop-mpii/', n_lms=output_lms)
+        provider = data_provider.HumanPose(batch_size=FLAGS.batch_size, root='/vol/atlas/databases/body/SupportVectorBody/crop-mpii-train/', n_lms=output_lms)
         images, keypoints_visible, keypoints_visible_mask, heatmap, heatmap_mask, gt_landmarks = provider.get('keypoints_visible/mask','heatmap/mask','landmarks')
 
         def keypts_encoding(keypoints):
@@ -127,7 +127,7 @@ def test(output_svs=5, output_lms=16, num_iterations=4):
     with tf.Session(graph=g) as sess:
 
         accuracy = pckh(predictions, gt_landmarks)
-        accuracy = tf.Print(accuracy, [tf.shape(accuracy), accuracy], summarize=5)
+        # accuracy = tf.Print(accuracy, [tf.shape(accuracy), accuracy], summarize=5)
         # These are streaming metrics which compute the "running" metric,
         # e.g running accuracy
         metrics_to_values, metrics_to_updates = slim.metrics.aggregate_metric_map({
@@ -151,14 +151,12 @@ def test(output_svs=5, output_lms=16, num_iterations=4):
 
         summary_ops.append(tf.scalar_summary('losses/running_pckh', tf.reduce_mean(accuracy[:,-1])))
 
-
         summary_ops.append(tf.image_summary('predictions/part-detection', generate_heatmap(part_prediction) * tf.to_float(keypoints_visible_mask)))
         summary_ops.append(tf.image_summary('predictions/landmark-regression', tf.reduce_sum(lms_prediction * tf.to_float(heatmap_mask), -1)[...,None] * 255.0))
         summary_ops.append(tf.image_summary('images', images, max_images=min(FLAGS.batch_size,4)))
 
-
         summary_ops.append(tf.image_summary('gt/visiable', generate_landmarks(keypoints_visible) + images * 0.1))
-        summary_ops.append(tf.image_summary('gt/all', tf.reduce_sum(heatmap * tf.to_float(heatmap_mask), -1)[...,None] * 255.0))
+        summary_ops.append(tf.image_summary('gt/all', tf.reduce_sum(heatmap * tf.to_float(heatmap_mask), -1)[...,None] * 255.0 + images * 0.1))
         summary_ops.append(tf.image_summary('mask', keypoints_visible_mask, max_images=min(FLAGS.batch_size,4)))
 
 
@@ -167,6 +165,7 @@ def test(output_svs=5, output_lms=16, num_iterations=4):
         logging.set_verbosity(1)
         num_examples = provider.num_samples()
         num_batches = np.ceil(num_examples / FLAGS.batch_size)
+        num_batches = 50
         slim.evaluation.evaluation_loop(
             '',
             FLAGS.train_dir,
