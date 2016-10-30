@@ -272,7 +272,7 @@ class HumanPose(Dataset):
                         img_hm.pixels[c,np.ceil(h),np.ceil(w)] = 1
                     except Exception as e:
                         print(e)
-            ghm = Image(np.stack([scipy.ndimage.gaussian_filter(cimg, 7) for cimg in img_hm.pixels], axis=0))
+            ghm = Image(np.stack([scipy.ndimage.gaussian_filter(cimg, 5) for cimg in img_hm.pixels], axis=0))
 
             hm = ghm.pixels_with_channels_at_back().astype(np.float32)
             return hm

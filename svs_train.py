@@ -13,7 +13,7 @@ from pathlib import Path
 slim = tf.contrib.slim
 
 FLAGS = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_float('initial_learning_rate', 0.0001,
+tf.app.flags.DEFINE_float('initial_learning_rate', 0.0005,
                           '''Initial learning rate.''')
 tf.app.flags.DEFINE_float('num_epochs_per_decay', 5.0,
                           '''Epochs after which learning rate decays.''')
@@ -311,14 +311,18 @@ def train_bl(output_lms=16):
 
 
 
-        tf.image_summary('predictions/part-detection', generate_heatmap(part_prediction) * tf.to_float(keypoints_visible_mask), max_images=min(FLAGS.batch_size,4))
-        tf.image_summary('predictions/landmark-regression', tf.reduce_sum(lms_prediction * tf.to_float(heatmap_mask), -1)[...,None] * 255.0, max_images=min(FLAGS.batch_size,4))
+        tf.image_summary('predictions/part-detection', generate_heatmap(part_prediction), max_images=min(FLAGS.batch_size,4))
+        tf.image_summary('predictions/landmark-regression', tf.reduce_sum(lms_prediction, -1)[...,None] * 255.0, max_images=min(FLAGS.batch_size,4))
+
+        tf.image_summary('mask/visible', keypoints_visible_mask, max_images=min(FLAGS.batch_size,4))
+        tf.image_summary('mask/heatmap', tf.reduce_sum(heatmap_mask, -1)[...,None] * 255.0, max_images=min(FLAGS.batch_size,4))
+
         tf.image_summary('images', images, max_images=min(FLAGS.batch_size,4))
 
 
         tf.image_summary('gt/visiable', generate_landmarks(keypoints_visible), max_images=min(FLAGS.batch_size,4))
         tf.image_summary('gt/all', tf.reduce_sum(heatmap * tf.to_float(heatmap_mask), -1)[...,None] * 255.0, max_images=min(FLAGS.batch_size,4))
-        tf.image_summary('mask', keypoints_visible_mask, max_images=min(FLAGS.batch_size,4))
+
 
         # Add a cosine loss to every scale and the combined output.
         # part-detection losses
@@ -332,9 +336,9 @@ def train_bl(output_lms=16):
             tf.scalar_summary('losses/part_detection_scale/{}'.format(net.name), loss)
 
         # landmark-regression losses
-        weight_hm = get_weight(heatmap, heatmap_mask, ng_w=0.1, ps_w=10.0)
-
-        l2norm = slim.losses.mean_squared_error(lms_prediction, heatmap, weight=weight_hm)
+        weight_hm = get_weight(heatmap, heatmap_mask, ng_w=10, ps_w=10)
+        norm_hm = heatmap*255.0 - 128.0
+        l2norm = slim.losses.mean_squared_error(lms_prediction, norm_hm, weight=weight_hm)
         tf.scalar_summary('losses/lms_pred', l2norm)
 
 
@@ -359,10 +363,6 @@ def train_bl(output_lms=16):
     with tf.Session(graph=g) as sess:
         init_fn = None
 
-        if FLAGS.pretrained_resnet_checkpoint_path:
-            init_fn = restore_resnet(sess,
-                                     FLAGS.pretrained_resnet_checkpoint_path)
-
         if FLAGS.pretrained_model_checkpoint_path:
             print('Loading whole model...')
             variables_to_restore = slim.get_model_variables()
@@ -370,6 +370,10 @@ def train_bl(output_lms=16):
                     FLAGS.pretrained_model_checkpoint_path,
                     {'/'.join(var.op.name.split('/')[2:]):var for var in variables_to_restore if not var.op.name.split('/')[1] == 'landmarks'},
                     ignore_missing_vars=True)
+
+        if FLAGS.pretrained_resnet_checkpoint_path:
+            init_fn = restore_resnet(sess,
+                                     FLAGS.pretrained_resnet_checkpoint_path)
 
         train_op = slim.learning.create_train_op(total_loss,
                                                  optimizer,
