@@ -196,7 +196,7 @@ class HumanPose(Dataset):
             batch_size=batch_size)
         self.image_extension = 'jpg'
         self.images_root = '.'
-        self.valid_check =valid_check
+        self.valid_check = valid_check
         self.n_lms = n_lms
 
     def get_keys(self):
@@ -258,7 +258,7 @@ class HumanPose(Dataset):
         svs.set_shape([4, None, None, 5])
         return svs, tf.ones_like(svs)
 
-    def get_heatmap(self, index, shape):
+    def get_heatmap(self, index, shape, sigma=7):
         def wrapper(index, shape):
             index = index.decode("utf-8")
             lms = mio.import_landmark_file(
@@ -266,16 +266,19 @@ class HumanPose(Dataset):
             marked_index = label_index(lms, 'marked')
 
             img_hm = Image.init_blank(shape[:2], n_channels=lms.n_landmarks)
-            for c,(h,w) in enumerate(np.round(lms.lms.points)):
+            xs, ys = np.meshgrid(np.arange(0, shape[1]), np.arange(0, shape[0]))
+
+            for c,(y, x) in enumerate(np.round(lms.lms.points)):
                 if c in marked_index:
                     try:
-                        img_hm.pixels[c,np.ceil(h),np.ceil(w)] = 1
+                        gaussian = (1 / (sigma * np.sqrt(2 * np.pi)))
+                        gaussian *= np.exp(-0.5 * (pow(ys - y, 2) + pow(xs - x, 2)) * pow(1 / sigma, 2))
+                        gaussian *= 17
+                        img_hm.pixels[c] = gaussian
                     except Exception as e:
                         print(e)
-            ghm = Image(np.stack([scipy.ndimage.gaussian_filter(cimg, 5) for cimg in img_hm.pixels], axis=0))
 
-            hm = ghm.pixels_with_channels_at_back().astype(np.float32)
-            return hm
+            return img_hm.pixels_with_channels_at_back().astype(np.float32)
 
         hm, = tf.py_func(wrapper, [index, shape], [tf.float32])
         hm.set_shape([None, None, self.n_lms])
