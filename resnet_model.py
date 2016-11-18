@@ -213,17 +213,37 @@ def svs_regression_net(inputs, output_classes=7):
 
 
 def svs_landmark_regression_net(images, output_svs=5, output_lms=13, num_iterations=4):
-    # Define model graph.
-    with tf.variable_scope('net'):
-        with slim.arg_scope([slim.batch_norm, slim.layers.dropout],
-                            is_training=True):
 
-            # svs regression net
-            prediction, states = svs_regression_net_light(images, output_classes=output_svs, num_iterations=num_iterations)
-            # States currently is
-            # (num_states, batch_size, height, width, num_parts)
-            net = tf.concat(3, [images] + states, name='concat-bridge')
-            lms_heatmap_prediction = hourglass_model.network(net, 1, output_channels=output_lms)
+
+    # svs regression net
+    prediction, states = svs_regression_net_light(images, output_classes=output_svs, num_iterations=num_iterations)
+    # States currently is
+    # (num_states, batch_size, height, width, num_parts)
+    net = tf.concat(3, [images] + states, name='concat-bridge')
+    lms_heatmap_prediction = hourglass_model.network(net, 1, output_channels=output_lms)
+
+    return prediction, states, lms_heatmap_prediction
+
+def svs_hourglass_net(inputs, output_svs=7, output_lms=16, num_iterations=4):
+
+    # svs hourglass net
+    states = []
+    batch_size = tf.shape(inputs)[0]
+    height = tf.shape(inputs)[1]
+    width = tf.shape(inputs)[2]
+
+    hidden = tf.zeros(
+        (batch_size, height, width, output_svs), name='hidden')
+
+    for i in range(num_iterations):
+        with tf.variable_scope('multiscale', reuse=i > 0):
+            hidden = (hidden - .5) * 256
+            hidden = hourglass_model.network(tf.concat(3, (inputs, hidden)), 1, output_channels=output_svs)
+            states.append(hidden)
+    prediction = hidden
+
+    net = tf.concat(3, [inputs] + states, name='concat-bridge')
+    lms_heatmap_prediction = hourglass_model.network(net, 1, output_channels=output_lms)
 
     return prediction, states, lms_heatmap_prediction
 
